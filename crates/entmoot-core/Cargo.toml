@@ -1,0 +1,11 @@
+[package]
+name = "entmoot-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Topic mapping, configuration, and auth for the Entmoot distributed MQTT databus"
+
+[dependencies]
+thiserror = { workspace = true }
+serde = { workspace = true }
+sha2 = { workspace = true }

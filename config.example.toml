@@ -1,0 +1,41 @@
+# Entmoot node configuration — hardened example.
+# Start with: entmoot --config entmoot.toml
+
+id = "ent-1"
+mqtt_listen = "0.0.0.0:1883"
+bus_listen = ["tcp/0.0.0.0:7447"]
+peers = []                        # e.g. ["tcp/10.0.0.2:7447", "tcp/10.0.0.3:7447"]
+scope = "entmoot"                 # namespace prefix on a shared Entmoot bus fabric
+max_packet_size = 262144
+max_connections = 10000
+max_publish_rate = 500            # msgs/s per connection; violators disconnected; 0 = off
+slow_consumer_grace_ms = 5000     # evict a client whose outbound queue stays full this long; 0 = never
+sys_interval_secs = 10            # publish $SYS/broker/<id>/... node stats; 0 = off
+
+[tls]                             # remove this section for plain MQTT only
+listen = "0.0.0.0:8883"
+cert_file = "/etc/entmoot/server.pem"
+key_file = "/etc/entmoot/server.key"
+
+[auth]
+allow_anonymous = false
+default_policy = "deny"           # "allow" ignores the [[acl]] entries below
+
+[[auth.users]]
+name = "plc1"
+# entmoot --hash-password 'the-password'
+password_sha256 = "5db1fee4b5703808c48078a76768b155b421b210c0761cd6a5d223f4d99f1eaa"
+
+[[auth.users]]
+name = "scada"
+password_sha256 = "5db1fee4b5703808c48078a76768b155b421b210c0761cd6a5d223f4d99f1eaa"
+
+[[acl]]
+user = "plc1"
+publish = ["plant/#"]
+subscribe = ["cmd/plc1/#"]
+
+[[acl]]
+user = "scada"
+publish = ["cmd/#"]
+subscribe = ["plant/#"]

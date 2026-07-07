@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Entmoot Console</title>
+    <link rel="preload" as="image" href="./assets/ent-shell/top_center_medallion.webp">
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <div class="isometric-view-container">
+      <div class="ent-shell" aria-label="Entmoot configuration console">
+        <img class="frame frame-top-left-cap" src="./assets/ent-shell/top_left_cap.webp" alt="" aria-hidden="true">
+        <img class="frame frame-top-left-repeat" src="./assets/ent-shell/top_left_repeating.webp" alt="" aria-hidden="true">
+        <img class="frame frame-top-medallion" src="./assets/ent-shell/top_center_medallion.webp" alt="" aria-hidden="true">
+        <img class="frame frame-top-right-repeat" src="./assets/ent-shell/top_right_repeating.webp" alt="" aria-hidden="true">
+        <img class="frame frame-top-right-cap" src="./assets/ent-shell/top_right_cap.webp" alt="" aria-hidden="true">
+        <img class="frame frame-menu" src="./assets/ent-shell/menu_area.webp" alt="" aria-hidden="true">
+        <img class="frame frame-left" src="./assets/ent-shell/left_column.webp" alt="" aria-hidden="true">
+        <img class="frame frame-right" src="./assets/ent-shell/right_column.webp" alt="" aria-hidden="true">
+        <img class="frame frame-bottom-left" src="./assets/ent-shell/bottom_left_cap.webp" alt="" aria-hidden="true">
+        <img class="frame frame-bottom-repeat" src="./assets/ent-shell/bottom_repeating.webp" alt="" aria-hidden="true">
+        <img class="frame frame-bottom-right" src="./assets/ent-shell/bottom_right_cap.webp" alt="" aria-hidden="true">
+
+        <div class="well" aria-hidden="true"></div>
+        <div class="root-graft root-graft-title-left" aria-hidden="true"></div>
+        <div class="root-graft root-graft-title-right" aria-hidden="true"></div>
+
+        <header class="shell-header">
+          <nav aria-label="Entmoot navigation">
+            <a class="nav-chip" href="#overview">Overview</a>
+            <a class="nav-chip" href="#topology">Grove</a>
+            <a class="nav-chip" href="#node">Trunk</a>
+            <a class="nav-chip" href="#mesh">Roots</a>
+            <a class="nav-chip" href="#limits">Rings</a>
+            <a class="nav-chip" href="#security">Bark</a>
+            <a class="nav-chip" href="#acl">Branches</a>
+            <a class="nav-chip" href="#toml">Seed</a>
+          </nav>
+          <div class="status-strip">
+            <span class="status-chip good"><span></span>Local Draft</span>
+            <span class="status-chip">No Bus Bound</span>
+          </div>
+        </header>
+
+        <main class="shell-content">
+          <section class="topbar">
+            <img src="./assets/ent-workshop-badge.webp" alt="" aria-hidden="true">
+            <div>
+              <p class="eyebrow">Distributed MQTT broker</p>
+              <h1>Entmoot Canopy Console</h1>
+            </div>
+            <div class="actions">
+              <button type="button" class="ghost" id="resetBtn">Reset</button>
+              <button type="button" id="copyBtn">Copy TOML</button>
+            </div>
+          </section>
+
+          <section class="overview" id="overview" aria-label="Cluster overview">
+            <article>
+              <span>Nodes</span>
+              <strong id="nodeCount">1</strong>
+              <small>configured trunks</small>
+            </article>
+            <article>
+              <span>Peers</span>
+              <strong id="peerCount">0</strong>
+              <small>Entmoot bus links</small>
+            </article>
+            <article>
+              <span>Clients</span>
+              <strong id="connectionCap">10000</strong>
+              <small>planned / capacity</small>
+            </article>
+            <article>
+              <span>Security</span>
+              <strong id="securityMode">Open</strong>
+              <small>auth posture</small>
+            </article>
+          </section>
+
+          <section class="panel topology-panel" id="topology">
+            <div class="panel-head">
+              <div>
+                <p class="eyebrow">Grove</p>
+                <h2>Client-to-node topology</h2>
+              </div>
+              <div class="actions">
+                <button type="button" class="ghost" id="addTopologyNodeBtn">Add Node</button>
+                <button type="button" class="ghost" id="addClientGroupBtn">Add Clients</button>
+              </div>
+            </div>
+            <div class="topology-grid">
+              <div class="graph-stage">
+                <svg id="topologyGraph" viewBox="0 0 860 360" role="img" aria-label="Client groups connected to Entmoot broker nodes"></svg>
+              </div>
+              <div class="topology-controls">
+                <div>
+                  <div class="subhead compact">
+                    <h3>Broker nodes</h3>
+                    <span id="topologyTotals">0 clients</span>
+                  </div>
+                  <div class="list" id="nodeCapacity"></div>
+                </div>
+                <div>
+                  <div class="subhead compact">
+                    <h3>Client groups</h3>
+                  </div>
+                  <div class="list" id="clientGroups"></div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="workspace">
+            <div class="editor">
+              <section class="panel" id="node">
+                <div class="panel-head">
+                  <div>
+                    <p class="eyebrow">Trunk</p>
+                    <h2>Node identity</h2>
+                  </div>
+                </div>
+                <div class="grid two">
+                  <label>
+                    Node ID
+                    <input data-field="id" value="ent-1" autocomplete="off">
+                  </label>
+                  <label>
+                    MQTT listener
+                    <input data-field="mqtt_listen" value="0.0.0.0:1883" autocomplete="off">
+                  </label>
+                  <label>
+                    Scope
+                    <input data-field="scope" value="entmoot" autocomplete="off">
+                  </label>
+                  <label>
+                    Metrics listener
+                    <input data-field="metrics_listen" placeholder="0.0.0.0:9464" autocomplete="off">
+                  </label>
+                  <label>
+                    Data directory
+                    <input data-field="data_dir" placeholder="/var/lib/entmoot" autocomplete="off">
+                  </label>
+                  <label>
+                    Max packet size
+                    <input type="number" min="1024" step="1024" data-field="max_packet_size" value="262144">
+                  </label>
+                </div>
+              </section>
+
+              <section class="panel" id="mesh">
+                <div class="panel-head">
+                  <div>
+                    <p class="eyebrow">Roots</p>
+                    <h2>Mesh fabric</h2>
+                  </div>
+                  <button type="button" class="ghost" id="addPeerBtn">Add Peer</button>
+                </div>
+                <div class="grid two">
+                  <label>
+                    Entmoot bus listen endpoint
+                    <input data-list="bus_listen" value="tcp/0.0.0.0:7447" autocomplete="off">
+                  </label>
+                  <label>
+                    Peer discovery mode
+                    <select data-field="discovery_mode">
+                      <option value="named">Named peers</option>
+                      <option value="isolated">Isolated node</option>
+                    </select>
+                  </label>
+                </div>
+                <div class="list" id="peers"></div>
+              </section>
+
+              <section class="panel" id="limits">
+                <div class="panel-head">
+                  <div>
+                    <p class="eyebrow">Rings</p>
+                    <h2>Capacity and persistence</h2>
+                  </div>
+                </div>
+                <div class="grid two">
+                  <label>
+                    Max connections
+                    <input type="number" min="1" step="100" data-field="max_connections" value="10000">
+                  </label>
+                  <label>
+                    Publish rate per connection
+                    <input type="number" min="0" step="10" data-field="max_publish_rate" value="500">
+                  </label>
+                  <label>
+                    Session expiry seconds
+                    <input type="number" min="0" step="60" data-field="session_expiry_secs" value="86400">
+                  </label>
+                  <label>
+                    Max queued per session
+                    <input type="number" min="0" step="100" data-field="max_queued_per_session" value="1000">
+                  </label>
+                </div>
+              </section>
+
+              <section class="panel" id="security">
+                <div class="panel-head">
+                  <div>
+                    <p class="eyebrow">Bark</p>
+                    <h2>Security</h2>
+                  </div>
+                  <div class="toggle">
+                    <input type="checkbox" id="tlsEnabled">
+                    <label for="tlsEnabled">TLS</label>
+                  </div>
+                </div>
+                <div class="grid two">
+                  <label>
+                    Anonymous clients
+                    <select data-field="allow_anonymous">
+                      <option value="false">Denied</option>
+                      <option value="true">Allowed</option>
+                    </select>
+                  </label>
+                  <label>
+                    Default policy
+                    <select data-field="default_policy">
+                      <option value="deny">Deny unless granted</option>
+                      <option value="allow">Allow all</option>
+                    </select>
+                  </label>
+                  <label class="tls-field">
+                    TLS listener
+                    <input data-field="tls_listen" value="0.0.0.0:8883" autocomplete="off">
+                  </label>
+                  <label class="tls-field">
+                    Certificate file
+                    <input data-field="cert_file" placeholder="/etc/entmoot/server.pem" autocomplete="off">
+                  </label>
+                  <label class="tls-field">
+                    Key file
+                    <input data-field="key_file" placeholder="/etc/entmoot/server.key" autocomplete="off">
+                  </label>
+                  <label class="tls-field">
+                    Client CA file
+                    <input data-field="client_ca_file" placeholder="/etc/entmoot/clients.pem" autocomplete="off">
+                  </label>
+                </div>
+                <div class="subhead">
+                  <h3>Users</h3>
+                  <button type="button" class="ghost" id="addUserBtn">Add User</button>
+                </div>
+                <div class="list" id="users"></div>
+              </section>
+
+              <section class="panel" id="acl">
+                <div class="panel-head">
+                  <div>
+                    <p class="eyebrow">Branches</p>
+                    <h2>Topic grants</h2>
+                  </div>
+                  <button type="button" class="ghost" id="addAclBtn">Add Rule</button>
+                </div>
+                <div class="list" id="aclRules"></div>
+              </section>
+            </div>
+
+            <aside class="preview" id="toml">
+              <div class="panel-head">
+                <div>
+                  <p class="eyebrow">Seed</p>
+                  <h2>Generated TOML</h2>
+                </div>
+                <span id="copyState">Ready</span>
+              </div>
+              <pre><code id="tomlOutput"></code></pre>
+            </aside>
+          </section>
+        </main>
+      </div>
+    </div>
+
+    <script src="./app.js" defer></script>
+  </body>
+</html>

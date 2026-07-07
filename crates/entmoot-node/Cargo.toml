@@ -1,0 +1,29 @@
+[package]
+name = "entmoot-node"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Entmoot databus node: MQTT 3.1.1 frontend over the Entmoot bus"
+
+[[bin]]
+name = "entmoot"
+path = "src/main.rs"
+
+[dependencies]
+entmoot-core = { workspace = true }
+zenoh = { workspace = true }
+tokio = { workspace = true }
+mqttbytes = { workspace = true }
+bytes = { workspace = true }
+anyhow = { workspace = true }
+clap = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+toml = { workspace = true }
+tokio-rustls = { workspace = true }
+rustls-pemfile = { workspace = true }
+x509-parser = { workspace = true }
+
+[dev-dependencies]
+rumqttc = { workspace = true, features = ["use-rustls"] }
+rcgen = { workspace = true }

@@ -1,0 +1,84 @@
+# Entmoot
+
+A distributed industrial MQTT databus: a mesh of small Rust nodes replaces a monolithic
+broker (HiveMQ/EMQX). Each node speaks standard MQTT 3.1.1 to clients and uses the
+Entmoot bus as the inter-node backbone — a publish on any node reaches subscribers on
+every node, with no consensus cluster and no shared database. See [PLAN.md](PLAN.md)
+for the architecture and phase roadmap.
+
+## Build note (this machine)
+
+`/home` is currently full, so point cargo's registry at the big drive before building:
+
+```sh
+export CARGO_HOME="/media/earthling/Caleb's Files3/.cargo-home"
+```
+
+## Quickstart
+
+```sh
+cargo test --workspace     # unit tests + 2-node cross-mesh integration test
+./scripts/dev-mesh.sh      # 3-node local mesh: MQTT on 1883/1884/1885
+```
+
+Then in two other terminals:
+
+```sh
+cargo run -p entmoot-node --example sub -- --port 1883 --topic 'plant/#'
+cargo run -p entmoot-node --example pub -- --port 1885 --topic plant/kiln1/temp --msg 993.5
+```
+
+The message enters node 3 and is delivered by node 1. Any MQTT 3.1.1 client
+(mosquitto, rumqttc, a PLC gateway) works the same way.
+
+## Canopy Console
+
+The lightweight configuration console lives in [web/index.html](web/index.html).
+It is static HTML/CSS/JS with no build step and exports TOML shaped for
+`entmoot --config`. The console borrows the Fendtastic frontend's ent-shell
+visual language using resized WebP assets under `web/assets/` to keep the first
+load small. The Grove view sketches broker nodes, planned client groups, and
+per-node client capacity so distributed deployments are easier to reason about.
+
+```sh
+python3 -m http.server 4173 -d web
+```
+
+Then open <http://127.0.0.1:4173>.
+
+## Node CLI
+
+```sh
+entmoot --id ent-1 \
+        --mqtt 0.0.0.0:1883 \
+        --bus-listen tcp/0.0.0.0:7447 \
+        --peer tcp/10.0.0.2:7447 --peer tcp/10.0.0.3:7447 \
+        --scope entmoot
+```
+
+`--scope` prefixes every mapped bus key, isolating the MQTT namespace when the nodes
+share an Entmoot bus fabric with other systems. Multicast scouting is disabled by
+design: nodes only join peers you name.
+
+## Hardened mode
+
+Security lives in the config file — see [config.example.toml](config.example.toml):
+
+```sh
+entmoot --hash-password 'the-password'   # -> sha256 for the users list
+entmoot --config entmoot.toml            # users, ACLs, TLS, rate limits
+```
+
+With `allow_anonymous = false` + `default_policy = "deny"`, only listed users connect
+and only granted topic filters can be published/subscribed. TLS runs on 8883 when a
+`[tls]` section is present.
+
+## Status
+
+Phase 1a+1b: QoS 0/1 (QoS 2 accepted, relayed at-least-once), wildcards, Last Will,
+keep-alive, retained messages mesh-wide (late-joining nodes catch up, persisted to
+disk), password auth and mTLS client-cert identity, per-identity topic ACLs, MQTT
+over TLS, publish rate limiting, connection caps, slow-consumer eviction,
+persistent sessions with offline QoS 1 queueing, Prometheus `/metrics`, and
+`$SYS/broker/<id>/…` node stats. Not yet: on-disk session queues, cert rotation,
+MQTT 5 — Phase 1c in [PLAN.md](PLAN.md).

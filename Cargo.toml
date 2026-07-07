@@ -1,0 +1,32 @@
+[workspace]
+resolver = "2"
+members = ["crates/entmoot-core", "crates/entmoot-node"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+
+[workspace.dependencies]
+entmoot-core = { path = "crates/entmoot-core" }
+zenoh = "1.9"
+tokio = { version = "1", features = ["full"] }
+mqttbytes = "0.6"
+bytes = "1"
+anyhow = "1"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+sha2 = "0.10"
+toml = "0.8"
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+rustls-pemfile = "2"
+rcgen = "0.14"
+x509-parser = "0.18"
+clap = { version = "4", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+rumqttc = "0.25"
+
+[profile.release]
+lto = "thin"
+strip = true
