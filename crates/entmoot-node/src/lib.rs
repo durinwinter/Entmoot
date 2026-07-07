@@ -230,6 +230,12 @@ pub async fn run(cfg: NodeConfig) -> Result<BrokerHandle> {
         conn_count: AtomicUsize::new(0),
     });
 
+    match session::rehydrate(&broker).await {
+        Ok(0) => {}
+        Ok(n) => info!(node = %broker.cfg.id, count = n, "persistent sessions rehydrated from disk"),
+        Err(e) => warn!(node = %broker.cfg.id, "subscription rehydration failed: {e}"),
+    }
+
     if let Some(l) = metrics_listener {
         let b = broker.clone();
         tasks.push(tokio::spawn(metrics::serve(l, b)));

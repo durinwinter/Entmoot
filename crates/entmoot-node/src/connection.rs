@@ -14,10 +14,10 @@
 //! rate limit whose violators are disconnected.
 
 use crate::metrics::Metrics;
-use crate::session::{Delivery, SessionState};
+use crate::session::{activate_subscription, SessionState};
 use crate::Broker;
 use anyhow::{anyhow, bail, Context, Result};
-use bytes::{Bytes, BytesMut};
+use bytes::BytesMut;
 use entmoot_core::auth::ConnectDenied;
 use entmoot_core::topic;
 use mqttbytes::v4::{
@@ -96,7 +96,7 @@ where
 
     let (reader, writer_tx, writer_task) = conn.split();
     let kicked = Arc::new(Notify::new());
-    let attach = broker.registry.attach(&client_id, clean, writer_tx.clone(), kicked.clone());
+    let attach = broker.registry.attach(&client_id, &identity, clean, writer_tx.clone(), kicked.clone());
 
     send(
         &writer_tx,
@@ -295,27 +295,17 @@ impl Client {
     }
 
     async fn subscribe(&mut self, filter: &str, req_qos: QoS) -> SubscribeReasonCode {
-        let ke = match topic::filter_to_keyexpr(filter, &self.broker.cfg.scope) {
-            Ok(ke) => ke,
-            Err(e) => {
-                warn!(client = %self.id, filter, "rejecting subscription: {e}");
-                Metrics::bump(&self.broker.metrics.subscribe_denied_total);
-                return SubscribeReasonCode::Failure;
-            }
-        };
+        if let Err(e) = topic::filter_to_keyexpr(filter, &self.broker.cfg.scope) {
+            warn!(client = %self.id, filter, "rejecting subscription: {e}");
+            Metrics::bump(&self.broker.metrics.subscribe_denied_total);
+            return SubscribeReasonCode::Failure;
+        }
         if !self.broker.acl.may_subscribe(&self.identity, filter) {
             warn!(client = %self.id, user = %self.identity, filter,
                   "subscription denied by ACL");
             Metrics::bump(&self.broker.metrics.subscribe_denied_total);
             return SubscribeReasonCode::Failure;
         }
-        let sub = match self.broker.session.declare_subscriber(&ke).await {
-            Ok(s) => s,
-            Err(e) => {
-                warn!(client = %self.id, %ke, "zenoh subscriber failed: {e}");
-                return SubscribeReasonCode::Failure;
-            }
-        };
 
         // At most QoS 1 is granted (no exactly-once tracking across the mesh).
         let granted = match req_qos {
@@ -323,25 +313,14 @@ impl Client {
             _ => QoS::AtLeastOnce,
         };
 
-        // The forwarding task belongs to the session and survives this
-        // connection when the session is persistent.
-        let scope = self.broker.cfg.scope.clone();
-        let session = self.session.clone();
-        let broker = self.broker.clone();
-        let task = tokio::spawn(async move {
-            while let Ok(sample) = sub.recv_async().await {
-                let Some(t) = topic::keyexpr_to_topic(sample.key_expr().as_str(), &scope) else {
-                    continue;
-                };
-                let payload = Bytes::from(sample.payload().to_bytes().into_owned());
-                match session.deliver(t.as_ref(), payload, granted, &broker.metrics).await {
-                    Delivery::Sent => Metrics::bump(&broker.metrics.messages_out_total),
-                    Delivery::Queued => Metrics::bump(&broker.metrics.messages_queued_total),
-                    Delivery::Dropped => {}
-                }
-            }
-        });
-        self.session.insert_sub(filter.to_string(), task);
+        // The forwarding task belongs to the session (not the connection) and
+        // survives a disconnect when the session is persistent; it is also
+        // reinstated directly at startup by `session::rehydrate` from what was
+        // persisted here, without waiting for the client to reconnect.
+        if let Err(e) = activate_subscription(&self.broker, &self.session, filter, granted).await {
+            warn!(client = %self.id, filter, "zenoh subscriber failed: {e}");
+            return SubscribeReasonCode::Failure;
+        }
         SubscribeReasonCode::Success(granted)
     }
 

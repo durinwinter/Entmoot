@@ -12,9 +12,17 @@
 //! Slow-consumer eviction: a client whose outbound queue stays full past the
 //! configured grace is kicked rather than allowed to stall its mesh
 //! subscriber tasks forever; delivery falls through to the offline path.
+//!
+//! Subscription filters (with granted QoS and the owning identity) are
+//! persisted alongside the offline queue when `data_dir` is configured. At
+//! startup [`rehydrate`] replays them so an offline session's zenoh
+//! subscribers - and therefore its offline queueing - resume immediately
+//! after a node restart, instead of only after the client reconnects.
 
 use crate::metrics::Metrics;
+use crate::Broker;
 use bytes::Bytes;
+use entmoot_core::topic;
 use mqttbytes::v4::{Packet, Publish};
 use mqttbytes::QoS;
 use std::collections::{HashMap, VecDeque};
@@ -27,6 +35,7 @@ use tokio::task::JoinHandle;
 use tracing::{debug, info, warn};
 
 const QUEUE_MAGIC: &[u8] = b"ENTMOOT-Q1\n";
+const SUBS_MAGIC: &[u8] = b"ENTMOOT-S1\n";
 
 pub struct SessionRegistry {
     sessions: Mutex<HashMap<String, Arc<SessionState>>>,
@@ -54,6 +63,7 @@ impl SessionRegistry {
     pub fn attach(
         &self,
         client_id: &str,
+        identity: &str,
         clean: bool,
         sink: mpsc::Sender<Packet>,
         kick: Arc<Notify>,
@@ -61,6 +71,7 @@ impl SessionRegistry {
         let session;
         let session_present;
         let queue_path = self.queue_path(client_id);
+        let subs_path = self.subs_path(client_id);
         {
             let mut map = self.sessions.lock().unwrap();
             match map.get(client_id).cloned() {
@@ -73,12 +84,16 @@ impl SessionRegistry {
                     existing.kick_current();
                     existing.abort_subs();
                     if let Some(path) = &queue_path {
-                        remove_queue_file(path);
+                        remove_state_file(path);
+                    }
+                    if let Some(path) = &subs_path {
+                        remove_state_file(path);
                     }
                     session = Arc::new(SessionState::new(
                         client_id,
                         self.max_queue,
                         self.slow_grace,
+                        None,
                         None,
                     ));
                     session_present = false;
@@ -86,21 +101,27 @@ impl SessionRegistry {
                 None => {
                     if clean {
                         if let Some(path) = &queue_path {
-                            remove_queue_file(path);
+                            remove_state_file(path);
+                        }
+                        if let Some(path) = &subs_path {
+                            remove_state_file(path);
                         }
                     }
-                    session_present = !clean && queue_path.as_ref().is_some_and(|p| p.exists());
+                    session_present = !clean
+                        && (queue_path.as_ref().is_some_and(|p| p.exists())
+                            || subs_path.as_ref().is_some_and(|p| p.exists()));
                     session = Arc::new(SessionState::new(
                         client_id,
                         self.max_queue,
                         self.slow_grace,
                         if clean { None } else { queue_path.clone() },
+                        if clean { None } else { subs_path.clone() },
                     ));
                 }
             }
             map.insert(client_id.to_string(), session.clone());
         }
-        let (epoch, backlog) = session.attach_conn(sink, kick);
+        let (epoch, backlog) = session.attach_conn(identity, sink, kick);
         if session_present {
             info!(client = %client_id, backlog = backlog.len(), "persistent session resumed");
         }
@@ -115,7 +136,7 @@ impl SessionRegistry {
         }
         if clean {
             session.abort_subs();
-            session.discard_queue_file();
+            session.discard_state_files();
             // Only remove our own entry: a reconnect may already have replaced
             // it with a fresh session under the same client id.
             let mut map = self.sessions.lock().unwrap();
@@ -139,7 +160,7 @@ impl SessionRegistry {
         for s in expired {
             info!(client = %s.client_id, "offline session expired, discarding");
             s.abort_subs();
-            s.discard_queue_file();
+            s.discard_state_files();
         }
     }
 
@@ -163,6 +184,106 @@ impl SessionRegistry {
     fn queue_path(&self, client_id: &str) -> Option<PathBuf> {
         self.queue_dir.as_ref().map(|dir| dir.join(format!("{}.queue", hex_name(client_id))))
     }
+
+    fn subs_path(&self, client_id: &str) -> Option<PathBuf> {
+        self.queue_dir.as_ref().map(|dir| dir.join(format!("{}.subs", hex_name(client_id))))
+    }
+}
+
+/// Recreate persistent sessions' zenoh subscriptions from the metadata the
+/// previous run persisted, so offline sessions resume collecting messages
+/// immediately at startup rather than only after the client reconnects.
+/// Each subscription's ACL grant is re-checked against the *current* config
+/// (a rule may have been tightened or removed since the file was written);
+/// filters that no longer pass are dropped and logged, not silently kept.
+pub async fn rehydrate(broker: &Arc<Broker>) -> anyhow::Result<usize> {
+    let Some(dir) = broker.registry.queue_dir.clone() else {
+        return Ok(0);
+    };
+    if !dir.exists() {
+        return Ok(0);
+    }
+    let mut restored = 0usize;
+    for entry in std::fs::read_dir(&dir).map_err(|e| anyhow::anyhow!("reading {}: {e}", dir.display()))? {
+        let path = entry.map_err(|e| anyhow::anyhow!("reading {}: {e}", dir.display()))?.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("subs") {
+            continue;
+        }
+        match rehydrate_one(broker, &path).await {
+            Ok(client_id) => {
+                info!(client = %client_id, file = %path.display(), "persistent session rehydrated");
+                restored += 1;
+            }
+            Err(e) => warn!(file = %path.display(), "skipping subscription file: {e}"),
+        }
+    }
+    Ok(restored)
+}
+
+async fn rehydrate_one(broker: &Arc<Broker>, path: &Path) -> anyhow::Result<String> {
+    let (client_id, identity, filters) = load_subs(path)?;
+    let queue_path = broker.registry.queue_path(&client_id);
+    let session = Arc::new(SessionState::new(
+        &client_id,
+        broker.registry.max_queue,
+        broker.registry.slow_grace,
+        queue_path,
+        Some(path.to_path_buf()),
+    ));
+    session.inner.lock().unwrap().identity = identity.clone();
+    for (filter, qos) in filters {
+        if !broker.acl.may_subscribe(&identity, &filter) {
+            warn!(client = %client_id, filter, "dropping persisted subscription: no longer permitted by ACL");
+            continue;
+        }
+        if let Err(e) = activate_subscription(broker, &session, &filter, qos).await {
+            warn!(client = %client_id, filter, "failed to rehydrate subscription: {e}");
+        }
+    }
+    // Reconcile the file with what actually got activated: a filter an ACL
+    // change dropped above should not keep reappearing verbatim on every
+    // subsequent restart.
+    session.persist_subs(&session.inner.lock().unwrap());
+    broker.registry.sessions.lock().unwrap().insert(client_id.clone(), session);
+    Ok(client_id)
+}
+
+/// Declare the zenoh subscriber for `filter` and spawn the task that forwards
+/// matching samples into the session (offline queueing included). Shared by
+/// live SUBSCRIBE handling and startup rehydration so both paths behave
+/// identically.
+pub async fn activate_subscription(
+    broker: &Arc<Broker>,
+    session: &Arc<SessionState>,
+    filter: &str,
+    granted: QoS,
+) -> anyhow::Result<()> {
+    let ke = topic::filter_to_keyexpr(filter, &broker.cfg.scope)
+        .map_err(|e| anyhow::anyhow!("invalid filter {filter:?}: {e}"))?;
+    let sub = broker
+        .session
+        .declare_subscriber(&ke)
+        .await
+        .map_err(|e| anyhow::anyhow!("zenoh subscriber on {ke}: {e}"))?;
+
+    let scope = broker.cfg.scope.clone();
+    let session_task = session.clone();
+    let broker_task = broker.clone();
+    let task = tokio::spawn(async move {
+        while let Ok(sample) = sub.recv_async().await {
+            let Some(t) = topic::keyexpr_to_topic(sample.key_expr().as_str(), &scope) else {
+                continue;
+            };
+            let payload = Bytes::from(sample.payload().to_bytes().into_owned());
+            match session_task.deliver(t.as_ref(), payload, granted, &broker_task.metrics).await {
+                Delivery::Sent => Metrics::bump(&broker_task.metrics.messages_out_total),
+                Delivery::Queued => Metrics::bump(&broker_task.metrics.messages_queued_total),
+                Delivery::Dropped => {}
+            }
+        }
+    });
+    session.insert_sub(filter.to_string(), granted, task);
+    Ok(())
 }
 
 pub struct SessionState {
@@ -171,6 +292,7 @@ pub struct SessionState {
     max_queue: usize,
     slow_grace: Option<Duration>,
     queue_path: Option<PathBuf>,
+    subs_path: Option<PathBuf>,
     inner: Mutex<Inner>,
 }
 
@@ -181,6 +303,9 @@ struct Inner {
     /// Why the current connection was kicked; read by the kicked connection
     /// to log/report the real cause (takeover vs slow-consumer eviction).
     kick_reason: Option<&'static str>,
+    /// Authenticated identity owning this session, used to re-check ACLs for
+    /// persisted subscriptions when rehydrating after a restart.
+    identity: String,
     subs: HashMap<String, SubEntry>,
     queue: VecDeque<(String, Bytes)>,
     dropped: u64,
@@ -188,6 +313,7 @@ struct Inner {
 }
 
 struct SubEntry {
+    qos: QoS,
     task: JoinHandle<()>,
 }
 
@@ -207,6 +333,7 @@ impl SessionState {
         max_queue: usize,
         slow_grace: Option<Duration>,
         queue_path: Option<PathBuf>,
+        subs_path: Option<PathBuf>,
     ) -> Self {
         let queue = queue_path
             .as_ref()
@@ -224,11 +351,13 @@ impl SessionState {
             max_queue,
             slow_grace,
             queue_path,
+            subs_path,
             inner: Mutex::new(Inner {
                 epoch: 0,
                 sink: None,
                 kick: None,
                 kick_reason: None,
+                identity: String::new(),
                 subs: HashMap::new(),
                 queue,
                 dropped: 0,
@@ -251,7 +380,12 @@ impl SessionState {
         }
     }
 
-    fn attach_conn(&self, sink: mpsc::Sender<Packet>, kick: Arc<Notify>) -> (u64, Vec<(String, Bytes)>) {
+    fn attach_conn(
+        &self,
+        identity: &str,
+        sink: mpsc::Sender<Packet>,
+        kick: Arc<Notify>,
+    ) -> (u64, Vec<(String, Bytes)>) {
         let mut inner = self.inner.lock().unwrap();
         if let Some(old_kick) = inner.kick.take() {
             inner.kick_reason = Some(KICK_TAKEOVER);
@@ -261,6 +395,12 @@ impl SessionState {
         inner.sink = Some(sink);
         inner.kick = Some(kick);
         inner.offline_since = None;
+        if inner.identity != identity {
+            inner.identity = identity.to_string();
+            if !inner.subs.is_empty() {
+                self.persist_subs(&inner); // keep the on-disk identity current
+            }
+        }
         let epoch = inner.epoch;
         let backlog = inner.queue.drain(..).collect();
         drop(inner);
@@ -315,16 +455,20 @@ impl SessionState {
         inner.offline_since = Some(Instant::now());
     }
 
-    pub fn insert_sub(&self, filter: String, task: JoinHandle<()>) {
-        if let Some(old) = self.inner.lock().unwrap().subs.insert(filter, SubEntry { task }) {
+    pub fn insert_sub(&self, filter: String, qos: QoS, task: JoinHandle<()>) {
+        let mut inner = self.inner.lock().unwrap();
+        if let Some(old) = inner.subs.insert(filter, SubEntry { qos, task }) {
             old.task.abort(); // MQTT-3.8.4-3: re-subscribe replaces
         }
+        self.persist_subs(&inner);
     }
 
     pub fn remove_sub(&self, filter: &str) {
-        if let Some(entry) = self.inner.lock().unwrap().subs.remove(filter) {
+        let mut inner = self.inner.lock().unwrap();
+        if let Some(entry) = inner.subs.remove(filter) {
             entry.task.abort();
         }
+        self.persist_subs(&inner);
     }
 
     pub fn abort_subs(&self) {
@@ -335,14 +479,35 @@ impl SessionState {
 
     fn discard_queue_file(&self) {
         if let Some(path) = &self.queue_path {
-            remove_queue_file(path);
+            remove_state_file(path);
         }
+    }
+
+    fn discard_subs_file(&self) {
+        if let Some(path) = &self.subs_path {
+            remove_state_file(path);
+        }
+    }
+
+    /// Remove both persisted files: called when a session truly ends (clean
+    /// disconnect or expiry), never on a plain reconnect.
+    pub fn discard_state_files(&self) {
+        self.discard_queue_file();
+        self.discard_subs_file();
     }
 
     fn persist_queue(&self, inner: &Inner) {
         let Some(path) = &self.queue_path else { return };
         if let Err(e) = save_queue(path, &inner.queue) {
             warn!(client = %self.client_id, file = %path.display(), "offline queue persistence failed: {e}");
+        }
+    }
+
+    fn persist_subs(&self, inner: &Inner) {
+        let Some(path) = &self.subs_path else { return };
+        let entries: Vec<(String, QoS)> = inner.subs.iter().map(|(f, e)| (f.clone(), e.qos)).collect();
+        if let Err(e) = save_subs(path, &self.client_id, &inner.identity, &entries) {
+            warn!(client = %self.client_id, file = %path.display(), "subscription persistence failed: {e}");
         }
     }
 
@@ -410,10 +575,10 @@ impl SessionState {
     }
 }
 
-fn remove_queue_file(path: &Path) {
+fn remove_state_file(path: &Path) {
     if let Err(e) = std::fs::remove_file(path) {
         if e.kind() != std::io::ErrorKind::NotFound {
-            warn!(file = %path.display(), "offline queue delete failed: {e}");
+            warn!(file = %path.display(), "state file delete failed: {e}");
         }
     }
 }
@@ -479,4 +644,55 @@ fn write_chunk(out: &mut Vec<u8>, chunk: &[u8]) -> anyhow::Result<()> {
 
 fn hex_name(s: &str) -> String {
     s.as_bytes().iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Persist (or, if empty, remove) the subscription file: client id, owning
+/// identity, then repeated (filter, 1-byte QoS) entries.
+fn save_subs(path: &Path, client_id: &str, identity: &str, entries: &[(String, QoS)]) -> anyhow::Result<()> {
+    if entries.is_empty() {
+        remove_state_file(path);
+        return Ok(());
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut out = Vec::with_capacity(SUBS_MAGIC.len() + 64 + entries.len() * 32);
+    out.extend_from_slice(SUBS_MAGIC);
+    write_chunk(&mut out, client_id.as_bytes())?;
+    write_chunk(&mut out, identity.as_bytes())?;
+    for (filter, qos) in entries {
+        write_chunk(&mut out, filter.as_bytes())?;
+        out.push(*qos as u8);
+    }
+    let tmp = path.with_extension("subs.tmp");
+    std::fs::write(&tmp, out)?;
+    std::fs::rename(tmp, path)?;
+    Ok(())
+}
+
+/// (client id, owning identity, subscribed filters with their granted QoS).
+type LoadedSubs = (String, String, Vec<(String, QoS)>);
+
+fn load_subs(path: &Path) -> anyhow::Result<LoadedSubs> {
+    let data = std::fs::read(path)?;
+    let mut rest = data
+        .strip_prefix(SUBS_MAGIC)
+        .ok_or_else(|| anyhow::anyhow!("not an entmoot subscription file"))?;
+    let client_id =
+        String::from_utf8(read_chunk(&mut rest)?).map_err(|_| anyhow::anyhow!("bad client id"))?;
+    let identity =
+        String::from_utf8(read_chunk(&mut rest)?).map_err(|_| anyhow::anyhow!("bad identity"))?;
+    let mut entries = Vec::new();
+    while !rest.is_empty() {
+        let filter = String::from_utf8(read_chunk(&mut rest)?)
+            .map_err(|_| anyhow::anyhow!("bad filter in subscription file"))?;
+        let (qos_byte, tail) = rest
+            .split_at_checked(1)
+            .ok_or_else(|| anyhow::anyhow!("truncated subscription file"))?;
+        let qos = mqttbytes::qos(qos_byte[0])
+            .map_err(|_| anyhow::anyhow!("bad qos byte {}", qos_byte[0]))?;
+        rest = tail;
+        entries.push((filter, qos));
+    }
+    Ok((client_id, identity, entries))
 }

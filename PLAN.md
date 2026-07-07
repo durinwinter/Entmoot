@@ -116,11 +116,19 @@ Done (Phase 1b):
   the client reconnects.
 - ✅ Kubernetes-style `/healthz` and `/readyz` endpoints via `health_listen`.
 
+Done (Phase 1c):
+
+- ✅ Persisted subscription metadata and restart-time offline session
+  rehydration: subscribed filters (with granted QoS and owning identity) are
+  written under `data_dir` alongside the offline queue. At startup the node
+  replays them, re-declaring the mesh subscriptions and re-checking each
+  filter against the *current* ACL, before any client reconnects — an offline
+  persistent session resumes collecting (and queueing) messages immediately
+  after a restart instead of only once the device itself reconnects. A grant
+  removed since the last run is dropped and logged, not silently reinstated.
+
 Remaining (Phase 1c):
 
-- Persisted subscription metadata and restart-time offline session rehydration
-  (queue backlog persists today; subscription tasks are not recreated until a
-  client reconnects).
 - TLS cert rotation / reload without restart.
 - MQTT 5 (via `mqttbytes::v5`): session expiry, shared subscriptions, reason codes.
 

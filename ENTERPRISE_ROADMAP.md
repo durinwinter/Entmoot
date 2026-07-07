@@ -96,8 +96,8 @@ broker without changing its public MQTT surface.
 
 ## Next Sprint Candidates
 
-- Persist subscription metadata so offline sessions can be fully rehydrated
-  after process restart.
+- ✅ Persist subscription metadata so offline sessions can be fully rehydrated
+  after process restart. Done: see Phase 1c in [PLAN.md](PLAN.md).
 - Add a drain endpoint or signal-driven drain mode for rolling upgrades.
 - Add Kubernetes manifests for StatefulSet, headless peer service, and PVCs.
 - Add a Kind smoke test that starts a three-node Entmoot mesh.

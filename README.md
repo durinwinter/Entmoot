@@ -78,11 +78,13 @@ QoS 1 queues for persistent sessions. Set `health_listen` for Kubernetes
 
 ## Status
 
-Phase 1a+1b: QoS 0/1 (QoS 2 accepted, relayed at-least-once), wildcards, Last Will,
+Phase 1a+1b+1c: QoS 0/1 (QoS 2 accepted, relayed at-least-once), wildcards, Last Will,
 keep-alive, retained messages mesh-wide (late-joining nodes catch up, persisted to
 disk), password auth and mTLS client-cert identity, per-identity topic ACLs, MQTT
 over TLS, publish rate limiting, connection caps, slow-consumer eviction,
-persistent sessions with offline QoS 1 queueing, disk-backed queued backlog under
-`data_dir`, Prometheus `/metrics`, Kubernetes `/healthz` + `/readyz`, and
-`$SYS/broker/<id>/…` node stats. Not yet: persisted subscription rehydration after
-restart, cert rotation, MQTT 5 — Phase 1c in [PLAN.md](PLAN.md).
+persistent sessions with offline QoS 1 queueing, disk-backed queued backlog and
+subscription metadata under `data_dir` (offline sessions rehydrate — subscriptions
+and all — at startup, before the client reconnects, with ACLs re-checked against
+current config), Prometheus `/metrics`, Kubernetes `/healthz` + `/readyz`, and
+`$SYS/broker/<id>/…` node stats. Not yet: TLS cert rotation, MQTT 5 — remaining
+Phase 1c items in [PLAN.md](PLAN.md).
