@@ -9,6 +9,11 @@ scope = "entmoot"                 # namespace prefix on a shared Entmoot bus fab
 max_packet_size = 262144
 max_connections = 10000
 max_publish_rate = 500            # msgs/s per connection; violators disconnected; 0 = off
+data_dir = "/var/lib/entmoot"     # retained state + offline persistent-session queues
+metrics_listen = "0.0.0.0:9464"  # Prometheus /metrics endpoint
+health_listen = "0.0.0.0:9465"   # Kubernetes /healthz and /readyz probes
+session_expiry_secs = 86400      # discard offline persistent sessions after this age; 0 = never
+max_queued_per_session = 1000    # offline QoS 1 queue bound per persistent session
 slow_consumer_grace_ms = 5000     # evict a client whose outbound queue stays full this long; 0 = never
 sys_interval_secs = 10            # publish $SYS/broker/<id>/... node stats; 0 = off
 

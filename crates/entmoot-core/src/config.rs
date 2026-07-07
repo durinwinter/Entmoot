@@ -29,6 +29,9 @@ pub struct NodeConfig {
     pub data_dir: Option<String>,
     /// Prometheus text endpoint, e.g. "0.0.0.0:9464". Absent = no metrics.
     pub metrics_listen: Option<String>,
+    /// Kubernetes-style health endpoint, e.g. "0.0.0.0:9465".
+    /// Serves /healthz and /readyz. Absent = no health endpoint.
+    pub health_listen: Option<String>,
     /// Seconds an offline persistent session (cleanSession=0) is kept before
     /// its subscriptions and queue are discarded. 0 = never expire.
     pub session_expiry_secs: u64,
@@ -62,6 +65,7 @@ impl Default for NodeConfig {
             max_publish_rate: 0,
             data_dir: None,
             metrics_listen: None,
+            health_listen: None,
             session_expiry_secs: 24 * 60 * 60,
             max_queued_per_session: 1000,
             slow_consumer_grace_ms: 5000,

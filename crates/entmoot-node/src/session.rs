@@ -18,17 +18,21 @@ use bytes::Bytes;
 use mqttbytes::v4::{Packet, Publish};
 use mqttbytes::QoS;
 use std::collections::{HashMap, VecDeque};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, Notify};
 use tokio::task::JoinHandle;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
+
+const QUEUE_MAGIC: &[u8] = b"ENTMOOT-Q1\n";
 
 pub struct SessionRegistry {
     sessions: Mutex<HashMap<String, Arc<SessionState>>>,
     max_queue: usize,
     slow_grace: Option<Duration>,
+    queue_dir: Option<PathBuf>,
 }
 
 pub struct AttachOutcome {
@@ -43,8 +47,8 @@ pub struct AttachOutcome {
 
 impl SessionRegistry {
     /// `slow_grace = None` disables slow-consumer eviction (block forever).
-    pub fn new(max_queue: usize, slow_grace: Option<Duration>) -> Self {
-        Self { sessions: Mutex::new(HashMap::new()), max_queue, slow_grace }
+    pub fn new(max_queue: usize, slow_grace: Option<Duration>, queue_dir: Option<PathBuf>) -> Self {
+        Self { sessions: Mutex::new(HashMap::new()), max_queue, slow_grace, queue_dir }
     }
 
     pub fn attach(
@@ -56,6 +60,7 @@ impl SessionRegistry {
     ) -> AttachOutcome {
         let session;
         let session_present;
+        let queue_path = self.queue_path(client_id);
         {
             let mut map = self.sessions.lock().unwrap();
             match map.get(client_id).cloned() {
@@ -67,12 +72,30 @@ impl SessionRegistry {
                     // cleanSession=1 discards any stored state (MQTT-3.1.2-6).
                     existing.kick_current();
                     existing.abort_subs();
-                    session = Arc::new(SessionState::new(client_id, self.max_queue, self.slow_grace));
+                    if let Some(path) = &queue_path {
+                        remove_queue_file(path);
+                    }
+                    session = Arc::new(SessionState::new(
+                        client_id,
+                        self.max_queue,
+                        self.slow_grace,
+                        None,
+                    ));
                     session_present = false;
                 }
                 None => {
-                    session = Arc::new(SessionState::new(client_id, self.max_queue, self.slow_grace));
-                    session_present = false;
+                    if clean {
+                        if let Some(path) = &queue_path {
+                            remove_queue_file(path);
+                        }
+                    }
+                    session_present = !clean && queue_path.as_ref().is_some_and(|p| p.exists());
+                    session = Arc::new(SessionState::new(
+                        client_id,
+                        self.max_queue,
+                        self.slow_grace,
+                        if clean { None } else { queue_path.clone() },
+                    ));
                 }
             }
             map.insert(client_id.to_string(), session.clone());
@@ -92,6 +115,7 @@ impl SessionRegistry {
         }
         if clean {
             session.abort_subs();
+            session.discard_queue_file();
             // Only remove our own entry: a reconnect may already have replaced
             // it with a fresh session under the same client id.
             let mut map = self.sessions.lock().unwrap();
@@ -115,6 +139,7 @@ impl SessionRegistry {
         for s in expired {
             info!(client = %s.client_id, "offline session expired, discarding");
             s.abort_subs();
+            s.discard_queue_file();
         }
     }
 
@@ -134,6 +159,10 @@ impl SessionRegistry {
         }
         (map.len(), offline, queued, dropped)
     }
+
+    fn queue_path(&self, client_id: &str) -> Option<PathBuf> {
+        self.queue_dir.as_ref().map(|dir| dir.join(format!("{}.queue", hex_name(client_id))))
+    }
 }
 
 pub struct SessionState {
@@ -141,6 +170,7 @@ pub struct SessionState {
     pkid: AtomicU16,
     max_queue: usize,
     slow_grace: Option<Duration>,
+    queue_path: Option<PathBuf>,
     inner: Mutex<Inner>,
 }
 
@@ -172,19 +202,35 @@ pub const KICK_TAKEOVER: &str = "session taken over by a new connection";
 pub const KICK_SLOW: &str = "slow consumer: outbound queue stayed full past the grace period";
 
 impl SessionState {
-    fn new(client_id: &str, max_queue: usize, slow_grace: Option<Duration>) -> Self {
+    fn new(
+        client_id: &str,
+        max_queue: usize,
+        slow_grace: Option<Duration>,
+        queue_path: Option<PathBuf>,
+    ) -> Self {
+        let queue = queue_path
+            .as_ref()
+            .and_then(|path| match load_queue(path, max_queue) {
+                Ok(queue) => Some(queue),
+                Err(e) => {
+                    warn!(client = %client_id, file = %path.display(), "ignoring offline queue file: {e}");
+                    None
+                }
+            })
+            .unwrap_or_default();
         Self {
             client_id: client_id.to_string(),
             pkid: AtomicU16::new(1),
             max_queue,
             slow_grace,
+            queue_path,
             inner: Mutex::new(Inner {
                 epoch: 0,
                 sink: None,
                 kick: None,
                 kick_reason: None,
                 subs: HashMap::new(),
-                queue: VecDeque::new(),
+                queue,
                 dropped: 0,
                 offline_since: None,
             }),
@@ -215,7 +261,11 @@ impl SessionState {
         inner.sink = Some(sink);
         inner.kick = Some(kick);
         inner.offline_since = None;
-        (inner.epoch, inner.queue.drain(..).collect())
+        let epoch = inner.epoch;
+        let backlog = inner.queue.drain(..).collect();
+        drop(inner);
+        self.discard_queue_file();
+        (epoch, backlog)
     }
 
     /// Returns false if this connection was already superseded.
@@ -283,6 +333,19 @@ impl SessionState {
         }
     }
 
+    fn discard_queue_file(&self) {
+        if let Some(path) = &self.queue_path {
+            remove_queue_file(path);
+        }
+    }
+
+    fn persist_queue(&self, inner: &Inner) {
+        let Some(path) = &self.queue_path else { return };
+        if let Err(e) = save_queue(path, &inner.queue) {
+            warn!(client = %self.client_id, file = %path.display(), "offline queue persistence failed: {e}");
+        }
+    }
+
     /// Deliver one message to this session: to the live connection if there is
     /// one, to the offline queue for QoS 1, or drop for offline QoS 0. A
     /// connection whose outbound queue stays full past the slow-consumer
@@ -326,8 +389,8 @@ impl SessionState {
                     }
                 }
                 None => {
-                    if qos == QoS::AtMostOnce {
-                        return Delivery::Dropped; // QoS 0 is not queued offline
+                    if qos == QoS::AtMostOnce || self.max_queue == 0 {
+                        return Delivery::Dropped;
                     }
                     let mut inner = self.inner.lock().unwrap();
                     if inner.sink.is_some() {
@@ -339,9 +402,81 @@ impl SessionState {
                         debug!(client = %self.client_id, "offline queue full, dropped oldest");
                     }
                     inner.queue.push_back((topic.to_string(), payload));
+                    self.persist_queue(&inner);
                     return Delivery::Queued;
                 }
             }
         }
     }
+}
+
+fn remove_queue_file(path: &Path) {
+    if let Err(e) = std::fs::remove_file(path) {
+        if e.kind() != std::io::ErrorKind::NotFound {
+            warn!(file = %path.display(), "offline queue delete failed: {e}");
+        }
+    }
+}
+
+fn load_queue(path: &Path, max_queue: usize) -> anyhow::Result<VecDeque<(String, Bytes)>> {
+    if max_queue == 0 {
+        return Ok(VecDeque::new());
+    }
+    let data = std::fs::read(path)?;
+    let body = data
+        .strip_prefix(QUEUE_MAGIC)
+        .ok_or_else(|| anyhow::anyhow!("not an entmoot offline queue"))?;
+    let mut rest = body;
+    let mut queue = VecDeque::new();
+    while !rest.is_empty() {
+        let topic = String::from_utf8(read_chunk(&mut rest)?)
+            .map_err(|_| anyhow::anyhow!("bad topic in offline queue"))?;
+        let payload = Bytes::from(read_chunk(&mut rest)?);
+        if queue.len() >= max_queue {
+            queue.pop_front();
+        }
+        queue.push_back((topic, payload));
+    }
+    Ok(queue)
+}
+
+fn save_queue(path: &Path, queue: &VecDeque<(String, Bytes)>) -> anyhow::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut out = Vec::with_capacity(QUEUE_MAGIC.len() + queue.len() * 64);
+    out.extend_from_slice(QUEUE_MAGIC);
+    for (topic, payload) in queue {
+        write_chunk(&mut out, topic.as_bytes())?;
+        write_chunk(&mut out, payload)?;
+    }
+    let tmp = path.with_extension("queue.tmp");
+    std::fs::write(&tmp, out)?;
+    std::fs::rename(tmp, path)?;
+    Ok(())
+}
+
+fn read_chunk(rest: &mut &[u8]) -> anyhow::Result<Vec<u8>> {
+    let (len_bytes, tail) = rest
+        .split_at_checked(4)
+        .ok_or_else(|| anyhow::anyhow!("truncated offline queue"))?;
+    let len = u32::from_be_bytes(len_bytes.try_into().unwrap()) as usize;
+    let (chunk, tail) = tail
+        .split_at_checked(len)
+        .ok_or_else(|| anyhow::anyhow!("truncated offline queue"))?;
+    *rest = tail;
+    Ok(chunk.to_vec())
+}
+
+fn write_chunk(out: &mut Vec<u8>, chunk: &[u8]) -> anyhow::Result<()> {
+    if chunk.len() > u32::MAX as usize {
+        anyhow::bail!("offline queue chunk too large");
+    }
+    out.extend_from_slice(&(chunk.len() as u32).to_be_bytes());
+    out.extend_from_slice(chunk);
+    Ok(())
+}
+
+fn hex_name(s: &str) -> String {
+    s.as_bytes().iter().map(|b| format!("{b:02x}")).collect()
 }

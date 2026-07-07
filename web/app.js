@@ -10,6 +10,7 @@ const state = {
   max_publish_rate: 500,
   data_dir: "",
   metrics_listen: "",
+  health_listen: "",
   session_expiry_secs: 86400,
   max_queued_per_session: 1000,
   tls_enabled: false,
@@ -244,6 +245,7 @@ function generateToml() {
 
   if (state.data_dir.trim()) lines.push(scalarLine("data_dir", state.data_dir));
   if (state.metrics_listen.trim()) lines.push(scalarLine("metrics_listen", state.metrics_listen));
+  if (state.health_listen.trim()) lines.push(scalarLine("health_listen", state.health_listen));
 
   lines.push(
     scalarLine("session_expiry_secs", Number(state.session_expiry_secs)),

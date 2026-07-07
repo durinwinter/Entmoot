@@ -147,6 +147,58 @@ async fn retained_survives_node_restart() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn offline_queue_survives_node_restart() {
+    let dir = std::env::temp_dir().join(format!("entmoot-p1b-queue-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let mut cfg = node_cfg("dq-1", 18868, 17498);
+    cfg.data_dir = Some(dir.to_string_lossy().into_owned());
+    let node = entmoot_node::run(cfg).await.unwrap();
+
+    let mut opts = client_opts("durable-plc", 18868);
+    opts.set_clean_session(false);
+    let (client, mut events) = AsyncClient::new(opts, 16);
+    client.subscribe("plant/#", QoS::AtLeastOnce).await.unwrap();
+    await_suback(&mut events).await;
+    drop(client);
+    drop(events);
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    let (pub_client, mut pub_events) = AsyncClient::new(client_opts("dq-feeder", 18868), 16);
+    tokio::spawn(async move { while pub_events.poll().await.is_ok() {} });
+    pub_client
+        .publish("plant/kiln1/temp", QoS::AtLeastOnce, false, "restart-durable")
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    node.shutdown().await;
+
+    let mut cfg = node_cfg("dq-2", 18869, 17499);
+    cfg.data_dir = Some(dir.to_string_lossy().into_owned());
+    let node = entmoot_node::run(cfg).await.unwrap();
+
+    let mut opts = client_opts("durable-plc", 18869);
+    opts.set_clean_session(false);
+    let (_client, mut events) = AsyncClient::new(opts, 16);
+    let connack = timeout(Duration::from_secs(5), async {
+        loop {
+            if let Event::Incoming(Packet::ConnAck(c)) = events.poll().await.unwrap() {
+                return c;
+            }
+        }
+    })
+    .await
+    .expect("no CONNACK");
+    assert!(connack.session_present, "disk queue should resume the session");
+    let p = await_publish(&mut events).await;
+    assert_eq!(p.topic, "plant/kiln1/temp");
+    assert_eq!(&p.payload[..], b"restart-durable");
+
+    node.shutdown().await;
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn mtls_cn_is_the_acl_identity() {
     use rcgen::{BasicConstraints, CertificateParams, DnType, IsCa, Issuer, KeyPair};
 
@@ -371,6 +423,26 @@ async fn metrics_endpoint_scrapes() {
         r#"entmoot_sessions{node="mx"} 1"#,
     ] {
         assert!(body.contains(needle), "missing {needle:?} in:\n{body}");
+    }
+
+    node.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn health_endpoint_reports_live_and_ready() {
+    let mut cfg = node_cfg("hx", 18870, 17500);
+    cfg.health_listen = Some("127.0.0.1:19465".into());
+    let node = entmoot_node::run(cfg).await.unwrap();
+
+    for path in ["/healthz", "/readyz"] {
+        let mut stream = tokio::net::TcpStream::connect("127.0.0.1:19465").await.unwrap();
+        stream
+            .write_all(format!("GET {path} HTTP/1.1\r\nHost: localhost\r\n\r\n").as_bytes())
+            .await
+            .unwrap();
+        let mut body = String::new();
+        stream.read_to_string(&mut body).await.unwrap();
+        assert!(body.starts_with("HTTP/1.1 200 OK"), "{path} got: {body}");
     }
 
     node.shutdown().await;

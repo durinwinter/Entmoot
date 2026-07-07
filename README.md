@@ -4,7 +4,8 @@ A distributed industrial MQTT databus: a mesh of small Rust nodes replaces a mon
 broker (HiveMQ/EMQX). Each node speaks standard MQTT 3.1.1 to clients and uses the
 Entmoot bus as the inter-node backbone — a publish on any node reaches subscribers on
 every node, with no consensus cluster and no shared database. See [PLAN.md](PLAN.md)
-for the architecture and phase roadmap.
+for the architecture and phase roadmap, and [ENTERPRISE_ROADMAP.md](ENTERPRISE_ROADMAP.md)
+for the open-source enterprise feature track.
 
 ## Build note (this machine)
 
@@ -71,7 +72,9 @@ entmoot --config entmoot.toml            # users, ACLs, TLS, rate limits
 
 With `allow_anonymous = false` + `default_policy = "deny"`, only listed users connect
 and only granted topic filters can be published/subscribed. TLS runs on 8883 when a
-`[tls]` section is present.
+`[tls]` section is present. Set `data_dir` to persist retained messages and offline
+QoS 1 queues for persistent sessions. Set `health_listen` for Kubernetes
+`/healthz` and `/readyz` probes.
 
 ## Status
 
@@ -79,6 +82,7 @@ Phase 1a+1b: QoS 0/1 (QoS 2 accepted, relayed at-least-once), wildcards, Last Wi
 keep-alive, retained messages mesh-wide (late-joining nodes catch up, persisted to
 disk), password auth and mTLS client-cert identity, per-identity topic ACLs, MQTT
 over TLS, publish rate limiting, connection caps, slow-consumer eviction,
-persistent sessions with offline QoS 1 queueing, Prometheus `/metrics`, and
-`$SYS/broker/<id>/…` node stats. Not yet: on-disk session queues, cert rotation,
-MQTT 5 — Phase 1c in [PLAN.md](PLAN.md).
+persistent sessions with offline QoS 1 queueing, disk-backed queued backlog under
+`data_dir`, Prometheus `/metrics`, Kubernetes `/healthz` + `/readyz`, and
+`$SYS/broker/<id>/…` node stats. Not yet: persisted subscription rehydration after
+restart, cert rotation, MQTT 5 — Phase 1c in [PLAN.md](PLAN.md).

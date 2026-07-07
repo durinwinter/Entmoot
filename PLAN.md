@@ -111,11 +111,16 @@ Done (Phase 1b):
   `sys_interval_secs`, mesh-wide. Mapped onto the verbatim `@sys` keyspace, so
   they are subscribe-only, unforgeable, and invisible to `#`/`+`
   (MQTT-4.7.2-1 for free).
+- ✅ Disk-backed offline QoS 1 backlog for persistent sessions when `data_dir`
+  is configured. Already-queued messages survive a node restart and drain when
+  the client reconnects.
+- ✅ Kubernetes-style `/healthz` and `/readyz` endpoints via `health_listen`.
 
 Remaining (Phase 1c):
 
-- Offline session queues on disk (retained state already persists; per-client
-  queues are memory-only).
+- Persisted subscription metadata and restart-time offline session rehydration
+  (queue backlog persists today; subscription tasks are not recreated until a
+  client reconnects).
 - TLS cert rotation / reload without restart.
 - MQTT 5 (via `mqttbytes::v5`): session expiry, shared subscriptions, reason codes.
 

@@ -6,6 +6,7 @@
 //! impossible by construction.
 
 mod connection;
+mod health;
 mod metrics;
 mod retained;
 mod session;
@@ -189,13 +190,26 @@ pub async fn run(cfg: NodeConfig) -> Result<BrokerHandle> {
         None => None,
     };
 
-    let retained_path = match &cfg.data_dir {
-        Some(dir) => {
-            std::fs::create_dir_all(dir).with_context(|| format!("creating data_dir {dir}"))?;
-            Some(std::path::Path::new(dir).join("retained.dat"))
+    let health_listener = match &cfg.health_listen {
+        Some(addr) => {
+            let l = TcpListener::bind(addr)
+                .await
+                .with_context(|| format!("binding health listener on {addr}"))?;
+            info!(node = %cfg.id, addr = %l.local_addr()?, "health endpoint up");
+            Some(l)
         }
         None => None,
     };
+
+    let state_dir = match &cfg.data_dir {
+        Some(dir) => {
+            std::fs::create_dir_all(dir).with_context(|| format!("creating data_dir {dir}"))?;
+            Some(std::path::PathBuf::from(dir))
+        }
+        None => None,
+    };
+    let retained_path = state_dir.as_ref().map(|dir| dir.join("retained.dat"));
+    let queue_dir = state_dir.as_ref().map(|dir| dir.join("session-queues"));
     let retained = Arc::new(RetainedStore::default());
     let mut tasks =
         retained::wire(session.clone(), retained.clone(), cfg.scope.clone(), retained_path).await?;
@@ -208,6 +222,7 @@ pub async fn run(cfg: NodeConfig) -> Result<BrokerHandle> {
             cfg.max_queued_per_session,
             (cfg.slow_consumer_grace_ms > 0)
                 .then(|| Duration::from_millis(cfg.slow_consumer_grace_ms)),
+            queue_dir,
         ),
         metrics: Metrics::default(),
         session,
@@ -218,6 +233,11 @@ pub async fn run(cfg: NodeConfig) -> Result<BrokerHandle> {
     if let Some(l) = metrics_listener {
         let b = broker.clone();
         tasks.push(tokio::spawn(metrics::serve(l, b)));
+    }
+
+    if let Some(l) = health_listener {
+        let b = broker.clone();
+        tasks.push(tokio::spawn(health::serve(l, b)));
     }
 
     if broker.cfg.sys_interval_secs > 0 {
