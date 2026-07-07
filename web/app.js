@@ -65,6 +65,15 @@ normalizeState(savedHadTopology);
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => Array.from(document.querySelectorAll(selector));
 const svgNS = "http://www.w3.org/2000/svg";
+const artboardWidth = 2730;
+const artboardHeight = 1536;
+const columnRepeatStep = 671 / artboardHeight;
+const columnRepeatOverlap = 30;
+const leftColumnRepeatExtraOverlap = 14;
+const leftColumnRepeatScaleY = 1.026;
+const shellChromeY = 48;
+const maxColumnRepeats = 6;
+let shellRepeatCount = -1;
 
 function normalizeState(savedHadTopologyDraft) {
   const legacyBusKey = "zen" + "oh_listen";
@@ -99,6 +108,81 @@ function normalizeState(savedHadTopologyDraft) {
     group.count = Number(group.count) || 0;
     group.nodeId = group.nodeId || primary.id;
     group.topic = group.topic || "#";
+  });
+}
+
+function ensureShellRepeats(repeatCount) {
+  if (repeatCount === shellRepeatCount) return;
+
+  const shell = $(".ent-shell");
+  const bottomLeft = $(".frame-bottom-left");
+  if (!shell || !bottomLeft) return;
+
+  $$(".frame-repeat-left, .frame-repeat-right").forEach((node) => node.remove());
+
+  for (let index = 0; index < repeatCount; index += 1) {
+    const left = document.createElement("img");
+    left.className = "frame frame-repeat-left";
+    left.src = "./assets/ent-shell/left_column.webp";
+    left.alt = "";
+    left.setAttribute("aria-hidden", "true");
+
+    const right = document.createElement("img");
+    right.className = "frame frame-repeat-right";
+    right.src = "./assets/ent-shell/right_column.webp";
+    right.alt = "";
+    right.setAttribute("aria-hidden", "true");
+
+    shell.insertBefore(left, bottomLeft);
+    shell.insertBefore(right, bottomLeft);
+  }
+
+  shellRepeatCount = repeatCount;
+}
+
+function measureEntShell() {
+  const shell = $(".ent-shell");
+  if (!shell) return;
+
+  const shellWidth = shell.getBoundingClientRect().width;
+  const baseHeight = shellWidth > 0 ? (shellWidth * artboardHeight) / artboardWidth : 840;
+  const repeatStepPx = baseHeight * columnRepeatStep;
+  const repeatStridePx = Math.max(1, repeatStepPx - columnRepeatOverlap);
+  const viewportTarget = window.innerHeight - shellChromeY;
+  const targetHeight = Math.max(840, viewportTarget, baseHeight);
+  const repeatCount = Math.min(
+    maxColumnRepeats,
+    Math.max(0, Math.ceil((targetHeight - baseHeight) / repeatStridePx)),
+  );
+  const totalHeight = baseHeight + repeatStridePx * repeatCount;
+  const compact = shellWidth < 760;
+  const headerTop = compact ? Math.max(76, baseHeight * 0.24) : baseHeight * 0.244;
+  const wellTop = compact ? Math.max(128, baseHeight * 0.42) : baseHeight * 0.315;
+  const contentTop = compact ? Math.max(138, baseHeight * 0.46) : baseHeight * 0.335;
+  const wellBottom = compact ? 58 : baseHeight * 0.094;
+  const contentBottom = compact ? 72 : baseHeight * 0.115;
+
+  shell.style.setProperty("--shell-base-height", `${baseHeight}px`);
+  shell.style.setProperty("--shell-height", `${totalHeight}px`);
+  shell.style.setProperty("--header-top", `${headerTop}px`);
+  shell.style.setProperty("--well-top", `${wellTop}px`);
+  shell.style.setProperty("--well-bottom", `${wellBottom}px`);
+  shell.style.setProperty("--content-top", `${contentTop}px`);
+  shell.style.setProperty("--content-bottom", `${contentBottom}px`);
+
+  ensureShellRepeats(repeatCount);
+
+  const repeats = $$(".frame-repeat-left, .frame-repeat-right");
+  repeats.forEach((frame, index) => {
+    const repeatIndex = Math.floor(index / 2) + 1;
+    const isLeft = frame.classList.contains("frame-repeat-left");
+    const overlap = isLeft ? columnRepeatOverlap + leftColumnRepeatExtraOverlap : columnRepeatOverlap;
+    const top = repeatStepPx * repeatIndex - overlap * repeatIndex;
+    frame.style.setProperty("--repeat-top", `${top}px`);
+    frame.style.transform = isLeft
+      ? `translateY(${2 + repeatIndex - 1}px) scaleY(${leftColumnRepeatScaleY})`
+      : `translateY(${2 + repeatIndex - 1}px)`;
+    frame.style.transformOrigin = "top center";
   });
 }
 
@@ -641,3 +725,5 @@ $("#copyBtn").addEventListener("click", async () => {
 
 bindStaticFields();
 render();
+measureEntShell();
+window.addEventListener("resize", measureEntShell);

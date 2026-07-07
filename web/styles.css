@@ -20,6 +20,8 @@
     url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 320 120'%3E%3Cg fill='none' stroke='%23140d0a' stroke-opacity='.7' stroke-linecap='round'%3E%3Cpath d='M-8 18C24 20 42 29 69 26C94 23 115 14 144 16C171 18 193 30 221 27C248 24 269 12 329 18' stroke-width='3.2'/%3E%3Cpath d='M-10 40C28 43 48 55 78 52C106 49 124 37 155 39C186 41 210 56 237 54C263 52 281 41 330 43' stroke-width='2.8'/%3E%3Cpath d='M-14 64C22 67 44 79 72 76C102 73 121 59 152 61C184 63 203 79 233 78C264 77 285 64 332 67' stroke-width='3.6'/%3E%3Cpath d='M-12 90C26 92 46 103 74 100C103 97 126 86 160 87C192 88 215 101 244 100C273 99 292 90 334 92' stroke-width='3'/%3E%3Cpath d='M44 22C41 32 39 42 37 54' stroke-width='1.5'/%3E%3Cpath d='M128 37C126 46 123 54 118 62' stroke-width='1.5'/%3E%3Cpath d='M214 25C211 36 210 48 210 59' stroke-width='1.5'/%3E%3Cpath d='M267 78C265 89 263 98 259 108' stroke-width='1.4'/%3E%3C/g%3E%3C/svg%3E");
   --ent-linework-soft:
     url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 320 120'%3E%3Cg fill='none' stroke='%23f6d38a' stroke-opacity='.11' stroke-linecap='round'%3E%3Cpath d='M-10 20C18 17 42 26 71 24C95 22 117 14 145 16C172 18 190 27 219 25C245 23 270 14 330 17' stroke-width='1.2'/%3E%3Cpath d='M-12 64C24 61 45 74 74 72C101 70 120 58 152 61C182 64 200 76 233 75C262 74 286 63 332 65' stroke-width='1.1'/%3E%3Cpath d='M-8 94C26 90 48 102 77 100C107 98 126 87 160 88C194 89 214 103 244 101C273 99 293 91 334 93' stroke-width='1.15'/%3E%3C/g%3E%3C/svg%3E");
+  --organic-webbing:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 480 360'%3E%3Cg fill='none' stroke-linecap='round' stroke-linejoin='round'%3E%3Cg stroke='%23e6b86f' stroke-opacity='.16'%3E%3Cpath d='M-32 42C47 75 95 20 160 50C228 82 267 118 342 67C396 31 443 48 512 83' stroke-width='4'/%3E%3Cpath d='M-22 162C58 121 112 178 181 145C242 116 288 116 349 150C401 178 450 152 505 122' stroke-width='3.2'/%3E%3Cpath d='M-24 286C48 314 97 251 161 280C223 309 270 338 338 290C393 252 445 266 505 304' stroke-width='3.4'/%3E%3C/g%3E%3Cg stroke='%230e0805' stroke-opacity='.32'%3E%3Cpath d='M75 72C67 121 70 190 91 253' stroke-width='2.2'/%3E%3Cpath d='M185 54C169 104 166 166 185 236' stroke-width='2'/%3E%3Cpath d='M308 75C286 128 286 210 310 281' stroke-width='2.2'/%3E%3Cpath d='M410 92C388 143 387 214 407 276' stroke-width='1.8'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
   --ent-ribbon:
     linear-gradient(122deg, transparent 0 16%, rgba(38, 24, 15, 0.42) 17%, rgba(140, 94, 56, 0.36) 21%, rgba(240, 195, 106, 0.12) 24%, rgba(84, 55, 33, 0.46) 28%, transparent 33%),
     linear-gradient(66deg, transparent 0 44%, rgba(35, 22, 14, 0.4) 45%, rgba(165, 114, 70, 0.32) 49%, rgba(255, 223, 141, 0.1) 52%, rgba(79, 51, 30, 0.42) 56%, transparent 61%),
@@ -90,6 +92,7 @@ button.ghost {
 .isometric-view-container {
   min-height: 100vh;
   padding: 1.4rem;
+  overflow: auto;
   background:
     radial-gradient(circle at top, rgba(240, 195, 106, 0.08), transparent 28%),
     linear-gradient(180deg, #0d0906, #050403 100%);
@@ -99,13 +102,17 @@ button.ghost {
   isolation: isolate;
   position: relative;
   width: min(100%, 1660px);
-  height: clamp(840px, 56vw, 960px);
+  height: var(--shell-height, clamp(840px, 56vw, 960px));
   margin: 0 auto;
   overflow: hidden;
   border-radius: 40px;
-  background:
+  background-image:
     radial-gradient(circle at 50% 100%, rgba(240, 195, 106, 0.08), transparent 28%),
+    var(--organic-webbing),
     linear-gradient(180deg, rgba(14, 10, 7, 0.96), rgba(4, 3, 2, 0.98));
+  background-size: auto, clamp(240px, 34vw, 520px) auto, auto;
+  background-position: 0 0, center top, 0 0;
+  background-repeat: no-repeat, repeat, no-repeat;
   box-shadow: 0 32px 60px rgba(0, 0, 0, 0.42);
 }
 
@@ -182,10 +189,10 @@ button.ghost {
 
 .frame {
   position: absolute;
-  inset: 0;
-  display: block;
+  left: 0;
   width: 100%;
-  height: 100%;
+  height: var(--shell-base-height, 100%);
+  display: block;
   object-fit: fill;
   pointer-events: none;
   user-select: none;
@@ -196,22 +203,33 @@ button.ghost {
 .frame-top-medallion,
 .frame-top-right-repeat,
 .frame-top-right-cap {
+  top: 0;
   z-index: 3;
 }
 
 .frame-menu {
+  top: 0;
   z-index: 5;
 }
 
 .frame-left,
 .frame-right {
+  top: 0;
   z-index: 2;
 }
 
 .frame-bottom-left,
 .frame-bottom-repeat,
 .frame-bottom-right {
+  bottom: 0;
   z-index: 4;
+}
+
+.frame-repeat-left,
+.frame-repeat-right {
+  top: var(--repeat-top, 0);
+  z-index: 2;
+  opacity: 0.99;
 }
 
 .frame-top-left-cap {
@@ -246,8 +264,8 @@ button.ghost {
   position: absolute;
   left: 13.8%;
   right: 6.8%;
-  top: 31.5%;
-  bottom: 9.4%;
+  top: var(--well-top, 31.5%);
+  bottom: var(--well-bottom, 9.4%);
   z-index: 1;
   border-radius: 34px;
   background:
@@ -263,7 +281,7 @@ button.ghost {
   position: absolute;
   left: 15.6%;
   right: 9.2%;
-  top: 24.4%;
+  top: var(--header-top, 24.4%);
   z-index: 6;
   display: flex;
   align-items: center;
@@ -336,8 +354,8 @@ nav {
   position: absolute;
   left: 15.2%;
   right: 8.2%;
-  top: 33.5%;
-  bottom: 11.5%;
+  top: var(--content-top, 33.5%);
+  bottom: var(--content-bottom, 11.5%);
   z-index: 6;
   min-height: 0;
   overflow: auto;
@@ -791,35 +809,25 @@ code {
 
 @media (max-width: 1180px) {
   .ent-shell {
-    height: auto;
-    min-height: 100vh;
     border-radius: 28px;
   }
 
-  .frame,
-  .well,
   .ent-shell::before,
-  .ent-shell::after,
-  .root-graft {
-    opacity: 0.35;
-  }
-
-  .shell-header,
-  .shell-content {
-    position: relative;
-    left: auto;
-    right: auto;
-    top: auto;
-    bottom: auto;
+  .ent-shell::after {
+    opacity: 0.46;
   }
 
   .shell-header {
-    padding: 7.5rem 1rem 0;
+    left: 7.2%;
+    right: 7.2%;
+    justify-content: flex-start;
+    flex-wrap: wrap;
   }
 
   .shell-content {
+    left: 6.8%;
+    right: 6.8%;
     padding: 1rem;
-    overflow: visible;
   }
 
   nav,
@@ -857,9 +865,19 @@ code {
     flex-direction: column;
   }
 
-  .shell-header,
+  .shell-header {
+    left: 6.8%;
+    right: 6.8%;
+  }
+
   .topbar {
     display: flex;
+  }
+
+  .well {
+    left: 5.8%;
+    right: 5.8%;
+    border-radius: 18px;
   }
 
   .topbar img {
