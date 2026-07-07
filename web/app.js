@@ -159,6 +159,8 @@ function measureEntShell() {
   const headerTop = compact ? Math.max(76, baseHeight * 0.24) : baseHeight * 0.244;
   const wellTop = compact ? Math.max(128, baseHeight * 0.42) : baseHeight * 0.315;
   const contentTop = compact ? Math.max(138, baseHeight * 0.46) : baseHeight * 0.335;
+  const bridgeTop = compact ? Math.max(104, baseHeight * 0.31) : baseHeight * 0.276;
+  const bridgeHeight = compact ? Math.max(86, baseHeight * 0.16) : baseHeight * 0.13;
   const wellBottom = compact ? 58 : baseHeight * 0.094;
   const contentBottom = compact ? 72 : baseHeight * 0.115;
 
@@ -169,6 +171,8 @@ function measureEntShell() {
   shell.style.setProperty("--well-bottom", `${wellBottom}px`);
   shell.style.setProperty("--content-top", `${contentTop}px`);
   shell.style.setProperty("--content-bottom", `${contentBottom}px`);
+  shell.style.setProperty("--bridge-top", `${bridgeTop}px`);
+  shell.style.setProperty("--bridge-height", `${bridgeHeight}px`);
 
   ensureShellRepeats(repeatCount);
 
