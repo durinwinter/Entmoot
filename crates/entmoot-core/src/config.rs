@@ -54,6 +54,17 @@ pub struct NodeConfig {
     /// Burst allowance for `connect_admission_rate`; clamped up to at least
     /// the rate itself. Ignored when the rate is 0.
     pub connect_admission_burst: u32,
+    /// A client reconnecting more than this many times within
+    /// `churn_window_secs` is quarantined (CONNECT refused with
+    /// `ServiceUnavailable`) for `churn_cooldown_secs` — the behavior-policy
+    /// counterpart to `connect_admission_rate`: that one sheds an aggregate
+    /// storm, this one catches one specific client flapping. 0 = disabled
+    /// (default).
+    pub churn_max_reconnects: u32,
+    /// Rolling window (seconds) `churn_max_reconnects` is measured over.
+    pub churn_window_secs: u64,
+    /// How long a flapping client is quarantined once caught.
+    pub churn_cooldown_secs: u64,
     /// Default staleness bound (seconds) for retained-message delivery:
     /// during partition heal, a retained value older than this is flagged via
     /// a `$meta/<topic>` companion message instead of being silently
@@ -77,6 +88,10 @@ pub struct NodeConfig {
     pub auth: AuthConfig,
     /// Grants consulted when `auth.default_policy = "deny"`.
     pub acl: Vec<AclRule>,
+    /// Data-validation rules: publishes on a matching topic must conform to
+    /// the given JSON Schema, or `on_fail` applies. First matching rule wins;
+    /// topics matching none are unvalidated (as today).
+    pub schema: Vec<SchemaRule>,
 }
 
 impl Default for NodeConfig {
@@ -99,12 +114,16 @@ impl Default for NodeConfig {
             sys_interval_secs: 10,
             connect_admission_rate: 0,
             connect_admission_burst: 0,
+            churn_max_reconnects: 0,
+            churn_window_secs: 60,
+            churn_cooldown_secs: 300,
             retained_staleness_secs: 0,
             staleness: Vec::new(),
             zenoh_link_mtu: None,
             tls: None,
             auth: AuthConfig::default(),
             acl: Vec::new(),
+            schema: Vec::new(),
         }
     }
 }
@@ -190,4 +209,28 @@ pub struct StalenessRule {
     /// Seconds after which a retained value on a matching topic is flagged
     /// stale on delivery.
     pub bound_secs: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SchemaRule {
+    /// MQTT topic filter (may use `+`/`#`) this schema applies to.
+    pub filter: String,
+    /// Inline JSON Schema text. A publish on a matching topic must parse as
+    /// JSON and validate against it.
+    pub schema: String,
+    /// What to do with a publish that fails validation (or isn't JSON at
+    /// all). Default: drop it (acked anyway, like an ACL-denied publish —
+    /// v3.1.1 has no error ack, and stalling would just make the device
+    /// retry forever).
+    #[serde(default)]
+    pub on_fail: SchemaFailAction,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SchemaFailAction {
+    #[default]
+    Drop,
+    Disconnect,
 }

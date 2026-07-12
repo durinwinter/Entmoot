@@ -49,6 +49,17 @@ struct Args {
     /// the real path MTU first with scripts/mtu-sweep.sh. Absent = Zenoh default.
     #[arg(long)]
     zenoh_link_mtu: Option<u16>,
+    /// Quarantine a client id that reconnects more than this many times
+    /// within --churn-window-secs. 0 = disabled. Schema rules for data
+    /// validation are config-file only (see config.example.toml).
+    #[arg(long)]
+    churn_max_reconnects: Option<u32>,
+    /// Rolling window (seconds) --churn-max-reconnects is measured over
+    #[arg(long)]
+    churn_window_secs: Option<u64>,
+    /// How long (seconds) a flapping client is quarantined once caught
+    #[arg(long)]
+    churn_cooldown_secs: Option<u64>,
 }
 
 #[tokio::main]
@@ -103,6 +114,15 @@ async fn main() -> Result<()> {
     }
     if let Some(mtu) = args.zenoh_link_mtu {
         cfg.zenoh_link_mtu = Some(mtu);
+    }
+    if let Some(n) = args.churn_max_reconnects {
+        cfg.churn_max_reconnects = n;
+    }
+    if let Some(secs) = args.churn_window_secs {
+        cfg.churn_window_secs = secs;
+    }
+    if let Some(secs) = args.churn_cooldown_secs {
+        cfg.churn_cooldown_secs = secs;
     }
 
     if cfg.auth.allow_anonymous && cfg.auth.users.is_empty() {

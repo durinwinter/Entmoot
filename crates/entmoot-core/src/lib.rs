@@ -4,6 +4,7 @@
 
 pub mod auth;
 pub mod config;
+pub mod schema;
 pub mod staleness;
 pub mod topic;
 

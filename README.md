@@ -119,3 +119,12 @@ future live visualizer to key liveness off. See
 [RESILIENCE_ROADMAP.md](RESILIENCE_ROADMAP.md) for the full six-workstream
 plan — all six workstreams are done, with real gaps/tradeoffs found along
 the way called out rather than glossed over.
+
+Data governance: `[[schema]]` rules validate publishes on a matching topic
+against a JSON Schema (drop or disconnect on failure), and
+`churn_max_reconnects` quarantines a specific client id that reconnects too
+often — Entmoot's take on HiveMQ's Data Hub schema/behavior policies. See
+[ENTERPRISE_ROADMAP.md](ENTERPRISE_ROADMAP.md) for the full HiveMQ
+feature-parity map and what's still open (Kubernetes packaging is the
+biggest gap — this environment has no working Docker/kubectl to build and
+verify it against, so it's flagged rather than shipped unverified).

@@ -6,6 +6,7 @@
 //! impossible by construction.
 
 mod admission;
+mod churn;
 mod connection;
 mod health;
 mod metrics;
@@ -13,6 +14,7 @@ mod retained;
 mod session;
 
 pub use admission::ConnectAdmission;
+pub use churn::ChurnGuard;
 pub use metrics::Metrics;
 pub use retained::RetainedStore;
 pub use session::SessionRegistry;
@@ -40,7 +42,9 @@ pub struct Broker {
     pub registry: SessionRegistry,
     pub metrics: Metrics,
     pub connect_admission: ConnectAdmission,
+    pub churn: ChurnGuard,
     pub staleness: entmoot_core::staleness::StalenessPolicy,
+    pub schema: entmoot_core::schema::SchemaPolicy,
     conn_count: AtomicUsize,
 }
 
@@ -224,6 +228,8 @@ pub async fn run(cfg: NodeConfig) -> Result<BrokerHandle> {
     let retained = Arc::new(RetainedStore::default());
     let mut tasks =
         retained::wire(session.clone(), retained.clone(), cfg.scope.clone(), retained_path).await?;
+    let schema = entmoot_core::schema::SchemaPolicy::new(cfg.schema.clone())
+        .map_err(|e| anyhow!("invalid [[schema]] config: {e}"))?;
 
     let broker = Arc::new(Broker {
         auth: Authenticator::new(&cfg.auth),
@@ -237,10 +243,12 @@ pub async fn run(cfg: NodeConfig) -> Result<BrokerHandle> {
         ),
         metrics: Metrics::default(),
         connect_admission: ConnectAdmission::new(cfg.connect_admission_rate, cfg.connect_admission_burst),
+        churn: ChurnGuard::new(cfg.churn_max_reconnects, cfg.churn_window_secs, cfg.churn_cooldown_secs),
         staleness: entmoot_core::staleness::StalenessPolicy::new(
             cfg.staleness.clone(),
             cfg.retained_staleness_secs,
         ),
+        schema,
         session,
         cfg,
         conn_count: AtomicUsize::new(0),
@@ -266,6 +274,18 @@ pub async fn run(cfg: NodeConfig) -> Result<BrokerHandle> {
         let b = broker.clone();
         let interval = Duration::from_secs(broker.cfg.sys_interval_secs);
         tasks.push(tokio::spawn(metrics::sys_publish(b, interval)));
+    }
+
+    if broker.cfg.churn_max_reconnects > 0 {
+        let b = broker.clone();
+        let idle_after = Duration::from_secs(broker.cfg.churn_window_secs);
+        tasks.push(tokio::spawn(async move {
+            let mut tick = tokio::time::interval(SWEEP_INTERVAL);
+            loop {
+                tick.tick().await;
+                b.churn.sweep(idle_after);
+            }
+        }));
     }
 
     if broker.cfg.session_expiry_secs > 0 {

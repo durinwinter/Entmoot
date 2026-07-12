@@ -10,11 +10,15 @@
 //! Hardening enforced here: connect-admission control (CONNECTs beyond the
 //! configured rate are refused with `ServiceUnavailable` before any auth or
 //! session work, ahead of the reconnect-storm path in `admission.rs`),
-//! password or client-cert auth on CONNECT, per-identity topic ACLs (denied
-//! publishes are dropped and logged, mosquitto-style, to avoid reconnect
-//! storms from misconfigured devices; denied subscriptions get a SUBACK
-//! failure), and a per-connection publish rate limit whose violators are
-//! disconnected.
+//! reconnect-churn quarantine (a specific client id reconnecting too often
+//! is refused for a cooldown, see `churn.rs`), password or client-cert auth
+//! on CONNECT, per-identity topic ACLs (denied publishes are dropped and
+//! logged, mosquitto-style, to avoid reconnect storms from misconfigured
+//! devices; denied subscriptions get a SUBACK failure), a per-connection
+//! publish rate limit whose violators are disconnected, and JSON Schema
+//! data validation (`entmoot_core::schema`) on publishes matching a
+//! configured topic filter — dropped or disconnected per the rule's
+//! `on_fail` action.
 
 use crate::metrics::Metrics;
 use crate::session::{activate_subscription, SessionState};
@@ -22,6 +26,8 @@ use crate::Broker;
 use anyhow::{anyhow, bail, Context, Result};
 use bytes::BytesMut;
 use entmoot_core::auth::ConnectDenied;
+use entmoot_core::config::SchemaFailAction;
+use entmoot_core::schema::Verdict as SchemaVerdict;
 use entmoot_core::topic;
 use mqttbytes::v4::{
     self, ConnAck, ConnectReturnCode, LastWill, Packet, PingResp, PubAck, PubComp, PubRec,
@@ -102,6 +108,14 @@ where
     } else {
         (connect.client_id.clone(), connect.clean_session)
     };
+
+    if crate::churn::Verdict::Quarantined == broker.churn.admit(&client_id) {
+        warn!(client = %client_id, addr = %peer, "CONNECT refused: reconnecting too often, quarantined");
+        Metrics::bump(&broker.metrics.churn_quarantined_total);
+        conn.write_packet(&Packet::ConnAck(ConnAck::new(ConnectReturnCode::ServiceUnavailable, false)))
+            .await?;
+        return Ok(());
+    }
 
     Metrics::bump(&broker.metrics.connections_total);
 
@@ -293,6 +307,19 @@ impl Client {
             warn!(client = %self.id, user = %self.identity, topic = %p.topic,
                   "publish denied by ACL, dropping");
             Metrics::bump(&self.broker.metrics.publish_denied_total);
+        } else if let SchemaVerdict::Fail(action) = self.broker.schema.check(&p.topic, &p.payload) {
+            Metrics::bump(&self.broker.metrics.schema_denied_total);
+            match action {
+                // Same reasoning as an ACL-denied publish: acked anyway
+                // below, since stalling would just make the device retry
+                // forever and v3.1.1 has no error ack to tell it otherwise.
+                SchemaFailAction::Drop => {
+                    warn!(client = %self.id, topic = %p.topic, "publish failed schema validation, dropping");
+                }
+                SchemaFailAction::Disconnect => {
+                    bail!("publish on {:?} failed schema validation, disconnecting", p.topic);
+                }
+            }
         } else {
             self.broker
                 .session

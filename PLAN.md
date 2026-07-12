@@ -175,6 +175,18 @@ keepalives), not off tunnel/link state, which says nothing about whether a
 specific MQTT client is still connected. This is fork-specific: a stock
 Zenoh peer has no MQTT client concept to report on.
 
+### Data validation and reconnect-churn quarantine
+
+`[[schema]]` rules validate a publish on a matching topic against an inline
+JSON Schema, dropping it (acked, not delivered) or disconnecting the client
+per the rule's `on_fail` — a per-node, per-message decision, no cross-node
+coordination. `churn_max_reconnects`/`churn_window_secs`/
+`churn_cooldown_secs` quarantine a specific client id that reconnects too
+often, independent of the aggregate connect-admission control above — the
+identity-aware complement to it. See ENTERPRISE_ROADMAP.md's HiveMQ
+feature-parity map for the full reasoning (Entmoot's take on HiveMQ's Data
+Governance Hub).
+
 ### Why not OpenZiti for this?
 
 Considered and parked: OpenZiti is a zero-trust *connectivity* overlay (identity-based

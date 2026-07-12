@@ -159,21 +159,48 @@ but it has a real cost we should name plainly instead of glossing over:
   open design question, not a checkbox, is more useful than a plan that
   quietly assumes it away.
 
-### Data Governance Hub (schema validation + behavior policies)
+### Data Governance Hub (schema validation + behavior policies) — done (v1)
 
 HiveMQ validates payloads against JSON Schema/Protobuf per topic filter
 (pass/drop/reroute), and models client lifecycle as a state machine to
 catch misbehaving clients (behavior policies) — a generalized, declarative
 version of what Entmoot currently does as one-off hardcoded checks (ACLs,
-publish rate limiting, connect admission, slow-consumer eviction). This is
+publish rate limiting, connect admission, slow-consumer eviction). This was
 the **most decentralization-friendly item on this whole list**: schema and
 behavior validation are inherently per-message, per-connection, per-node
 decisions — no cross-node coordination needed at all, unlike session HA
-above. Not built yet. Shape it the same way `AclRule`/`StalenessRule`
-already are (topic-filter-matched rule lists in config), with a schema
-registry (JSON Schema to start; Protobuf is a bigger lift) and an action
-pipeline (drop-and-log, reject-and-disconnect, reroute to a dead-letter
-topic). Good next real feature — no architectural risk.
+above.
+
+- **Schema (data) policy**: `[[schema]]` rules (`entmoot_core::schema`),
+  shaped exactly like `AclRule`/`StalenessRule` — topic-filter matched, first
+  match wins. A publish on a matching topic must parse as JSON and validate
+  against the configured JSON Schema (the `jsonschema` crate, no
+  remote-`$ref` resolution — schemas are self-contained, compiled at
+  startup so a malformed one is a startup error, not a silent no-op under
+  load), or `on_fail` applies: `drop` (acked, not delivered — same
+  reasoning as an ACL-denied publish, v3.1.1 has no error ack) or
+  `disconnect`. Protobuf schemas are still a bigger lift and not built.
+  `entmoot_schema_denied_total` in `/metrics`. Tests in
+  `crates/entmoot-node/tests/schema.rs`.
+- **Behavior policy**: rather than a generic state-machine framework (a much
+  bigger project), built the one concrete case HiveMQ's own behavior-policy
+  marketing example leads with and Entmoot didn't have yet — reconnect
+  churn. `churn_max_reconnects`/`churn_window_secs`/`churn_cooldown_secs`
+  quarantine a *specific client id* that reconnects too often within a
+  window, refusing its CONNECT with `ServiceUnavailable` for a cooldown.
+  This is deliberately the identity-aware complement to workstream 1's
+  connect-admission control, which sheds an aggregate storm without caring
+  who anyone is — churn quarantine catches one client flapping even while
+  the rest of the mesh is quiet. `entmoot_churn_quarantined_total` in
+  `/metrics`. Tests in `crates/entmoot-node/src/churn.rs` (unit) and
+  `crates/entmoot-node/tests/churn.rs` (integration).
+
+A full HiveMQ-style declarative behavior-policy *engine* (arbitrary client
+state machines, not just the one built-in churn case) remains a bigger,
+separate project if more cases accumulate — this shipped the schema half in
+full and the one behavior case that mattered most given this repo's own
+reconnect-storm work, not a generalized framework nobody's asked to extend
+yet.
 
 ### Enterprise Security Extension (LDAP, OAuth2/JWT, RBAC, dynamic permissions)
 
@@ -285,9 +312,16 @@ subscriber for free, no special API layer required).
 
 1. Kubernetes packaging (Phase 2) — biggest, most overdue, blocks
    production credibility and is already referenced as a dependency by
-   work shipped this session.
-2. Data Hub-style schema/behavior policy engine — fully
-   decentralization-compatible, no architectural risk, real differentiator.
+   work shipped this session. **Still not started** — this environment has
+   no working Docker daemon or `kubectl`/`kind`, so manifests written here
+   couldn't be exercised end to end; flagging that constraint rather than
+   shipping unverified StatefulSet/Helm artifacts the way the chaos
+   manifests were (those were lower-stakes and clearly labeled
+   forward-looking).
+2. ✅ Data Hub-style schema/behavior policy engine — done (v1: JSON Schema
+   data policies + reconnect-churn as the one behavior-policy case that
+   mattered most). Fully decentralization-compatible, no architectural
+   risk shipped.
 3. Pluggable/dynamic auth — hot-reload first, then JWT/OAuth2, then LDAP —
    fully decentralization-compatible.
 4. Control-center-lite (force-disconnect over `$meta/clients`) and the

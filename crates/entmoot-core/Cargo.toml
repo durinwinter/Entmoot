@@ -9,3 +9,5 @@ description = "Topic mapping, configuration, and auth for the Entmoot distribute
 thiserror = { workspace = true }
 serde = { workspace = true }
 sha2 = { workspace = true }
+jsonschema = { workspace = true }
+serde_json = { workspace = true }

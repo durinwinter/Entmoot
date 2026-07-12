@@ -18,6 +18,9 @@ slow_consumer_grace_ms = 5000     # evict a client whose outbound queue stays fu
 sys_interval_secs = 10            # publish $SYS/broker/<id>/... node stats; 0 = off
 connect_admission_rate = 0        # max new CONNECTs/s let through to auth/session work; 0 = off
 connect_admission_burst = 0       # burst allowance for connect_admission_rate; clamped to >= the rate
+churn_max_reconnects = 0          # quarantine a client id reconnecting this many times per window; 0 = off
+churn_window_secs = 60            # rolling window churn_max_reconnects is measured over
+churn_cooldown_secs = 300         # how long a flapping client is quarantined once caught
 retained_staleness_secs = 0       # default staleness bound for retained delivery; 0 = off ($meta/<topic> if exceeded)
 
 # Per-namespace staleness overrides; first match wins, else retained_staleness_secs applies.
@@ -55,3 +58,11 @@ subscribe = ["cmd/plc1/#"]
 user = "scada"
 publish = ["cmd/#"]
 subscribe = ["plant/#"]
+
+# Data validation: a publish on a matching topic must conform to the given
+# JSON Schema, or on_fail applies ("drop" acked-but-not-delivered, the
+# default, or "disconnect"). First matching rule wins.
+# [[schema]]
+# filter = "plant/+/temp"
+# schema = '{"type":"object","properties":{"value":{"type":"number"}},"required":["value"]}'
+# on_fail = "drop"
