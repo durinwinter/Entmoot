@@ -1,0 +1,42 @@
+# Splits a 3-replica entmoot StatefulSet into a 1-vs-2 partition for 60s,
+# then heals automatically when the experiment ends. This is the in-cluster
+# replay of the WS1 turmoil scenario ("partition the mesh, heal it, storm
+# the survivors") — see RESILIENCE_ROADMAP.md workstream 1 for why turmoil
+# itself couldn't run it, and workstream 3 for how this fits alongside
+# Toxiproxy (chaos/toxiproxy-mesh.sh) for links below the cluster network.
+#
+# Assumes the Phase 2 Kubernetes packaging (PLAN.md): a StatefulSet named
+# "entmoot" labelled app=entmoot in the "entmoot" namespace, giving pods
+# entmoot-0, entmoot-1, entmoot-2. Adjust names/labels/namespace to match
+# your actual deployment before applying.
+#
+# Requires Chaos Mesh (https://chaos-mesh.org) installed in the cluster.
+apiVersion: chaos-mesh.org/v1alpha1
+kind: NetworkChaos
+metadata:
+  name: entmoot-site-partition
+  namespace: entmoot
+spec:
+  action: partition
+  mode: all
+  selector:
+    namespaces:
+      - entmoot
+    labelSelectors:
+      app: entmoot
+    pods:
+      entmoot:
+        - entmoot-0
+  direction: both
+  target:
+    mode: all
+    selector:
+      namespaces:
+        - entmoot
+      labelSelectors:
+        app: entmoot
+      pods:
+        entmoot:
+          - entmoot-1
+          - entmoot-2
+  duration: "60s"

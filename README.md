@@ -96,7 +96,9 @@ sheds excess CONNECTs with a legible `ServiceUnavailable` ahead of
 `max_connections`, and concurrent SUBSCRIBEs sharing a filter coalesce into
 one retained-store scan instead of one per client. Partition staleness:
 retained deliveries past `retained_staleness_secs` get a `$meta/<topic>`
-companion flag instead of being presented as current. See
-[RESILIENCE_ROADMAP.md](RESILIENCE_ROADMAP.md) for the full six-workstream
-plan (workstreams 1-2 done; chaos injection, benchmarking, transport
-hygiene, and visualizer honesty are still open).
+companion flag instead of being presented as current. Fault injection for
+both: [chaos/](chaos/) has a Toxiproxy-fronted mesh + partition/heal/storm
+script runnable today, and Chaos Mesh manifests for once Phase 2 packaging
+ships. See [RESILIENCE_ROADMAP.md](RESILIENCE_ROADMAP.md) for the full
+six-workstream plan (workstreams 1-3 done; benchmarking, transport hygiene,
+and visualizer honesty are still open).

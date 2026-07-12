@@ -1,0 +1,42 @@
+# Runs the site-partition experiment on a recurring schedule, for unattended
+# soak testing across the workstream-4 benchmark matrix's partition-duration
+# axis (10s/60s/10min x 1k/10k clients x single/two-site). This schedule
+# covers the 60s cell; clone it with a different `duration` (and a different
+# `name`) for the 10s and 10min cells, and stagger the cron expressions so
+# experiments don't overlap.
+#
+# Assumes the Phase 2 Kubernetes packaging; see networkchaos-site-partition.yaml.
+apiVersion: chaos-mesh.org/v1alpha1
+kind: Schedule
+metadata:
+  name: entmoot-site-partition-60s
+  namespace: entmoot
+spec:
+  schedule: "0 */2 * * *" # every 2 hours; adjust to your soak-test cadence
+  historyLimit: 5
+  concurrencyPolicy: Forbid
+  type: NetworkChaos
+  networkChaos:
+    action: partition
+    mode: all
+    selector:
+      namespaces:
+        - entmoot
+      labelSelectors:
+        app: entmoot
+      pods:
+        entmoot:
+          - entmoot-0
+    direction: both
+    target:
+      mode: all
+      selector:
+        namespaces:
+          - entmoot
+        labelSelectors:
+          app: entmoot
+        pods:
+          entmoot:
+            - entmoot-1
+            - entmoot-2
+    duration: "60s"

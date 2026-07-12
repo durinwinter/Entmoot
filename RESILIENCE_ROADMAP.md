@@ -7,9 +7,9 @@ PLC gateways reconnect at once. Six workstreams, sequenced so the ones that
 change the architecture land before the ones that just measure it:
 
 ```
-1. reconnect storm / rehydration herd   ← done
+1. reconnect storm / rehydration herd    ← done
 2. partition merge semantics / staleness ← done
-3. cluster-level fault injection
+3. cluster-level fault injection         ← done
 4. benchmarking methodology
 5. Nebula/transport hygiene
 6. visualizer honesty
@@ -113,13 +113,25 @@ the reply path, which the "correct" HLC answer didn't in this API version.
   flag, a delivery past the bound does, and a per-namespace override takes
   precedence over the node-wide default.
 
-## 3. Cluster-level fault injection — not started
+## 3. Cluster-level fault injection — done
 
-Chaos Mesh (`NetworkChaos` CRDs) for in-cluster partition/loss/latency/
-bandwidth scenarios, replaying the turmoil-style scripts we couldn't run at
-the simulation layer. Toxiproxy or `tc netem` on the underlay for the
-Nebula-specific paths (UDP-in-UDP, hole-punch recovery), since those tunnels
-live below the Kubernetes cluster network Chaos Mesh operates in.
+Two layers, in `chaos/` (see `chaos/README.md` for the full writeup):
+
+- **Toxiproxy, runnable today:** `chaos/toxiproxy-mesh.sh` fronts a real
+  two-node Entmoot mesh's inter-node bus link with Toxiproxy, and
+  `chaos/scenarios/partition-heal-reconnect-storm.sh` drives exactly the
+  scenario turmoil was meant for in workstream 1 (partition N seconds, heal,
+  storm the survivor with simultaneous reconnects) — at the real TCP layer
+  instead of in-process, since that's where the constraint actually was.
+  This is also the tool of record for Nebula-specific underlay paths once
+  they exist, per the original plan, since Chaos Mesh only sees inside the
+  cluster network.
+- **Chaos Mesh, assumes Phase 2 packaging:** `chaos/k8s/*.yaml` —
+  `NetworkChaos` site-partition, packet-loss, and latency/jitter manifests
+  plus a recurring `Schedule` — against the StatefulSet Phase 2 packaging
+  will produce (PLAN.md). Phase 2 hasn't shipped, so these are forward-
+  looking and documented as such; selectors will need adjusting to whatever
+  the real deployment's labels turn out to be.
 
 ## 4. Benchmarking methodology — not started
 

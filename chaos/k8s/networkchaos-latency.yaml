@@ -1,0 +1,25 @@
+# Latency + jitter on all entmoot bus links. Pair with the workstream-4
+# benchmark harness to see p99.9 live-traffic latency degrade gracefully
+# rather than cliff — this is the "graceful" half of the fault-injection
+# matrix, the loss/partition manifests in this directory are the "sharp"
+# half.
+#
+# Assumes the Phase 2 Kubernetes packaging; see networkchaos-site-partition.yaml.
+apiVersion: chaos-mesh.org/v1alpha1
+kind: NetworkChaos
+metadata:
+  name: entmoot-bus-latency
+  namespace: entmoot
+spec:
+  action: delay
+  mode: all
+  selector:
+    namespaces:
+      - entmoot
+    labelSelectors:
+      app: entmoot
+  delay:
+    latency: "50ms"
+    jitter: "10ms"
+    correlation: "25"
+  duration: "120s"
