@@ -23,7 +23,10 @@ toml = { workspace = true }
 tokio-rustls = { workspace = true }
 rustls-pemfile = { workspace = true }
 x509-parser = { workspace = true }
+moka = { workspace = true }
+governor = { workspace = true }
 
 [dev-dependencies]
 rumqttc = { workspace = true, features = ["use-rustls"] }
 rcgen = { workspace = true }
+hdrhistogram = { workspace = true }

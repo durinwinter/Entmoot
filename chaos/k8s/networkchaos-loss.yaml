@@ -1,0 +1,22 @@
+# Packet loss on all entmoot bus links, for degraded-link (not full
+# partition) behavior — reconnect/retry backoff under lossy conditions
+# rather than a clean partition/heal transition.
+#
+# Assumes the Phase 2 Kubernetes packaging; see networkchaos-site-partition.yaml.
+apiVersion: chaos-mesh.org/v1alpha1
+kind: NetworkChaos
+metadata:
+  name: entmoot-bus-loss
+  namespace: entmoot
+spec:
+  action: loss
+  mode: all
+  selector:
+    namespaces:
+      - entmoot
+    labelSelectors:
+      app: entmoot
+  loss:
+    loss: "10"
+    correlation: "25"
+  duration: "60s"

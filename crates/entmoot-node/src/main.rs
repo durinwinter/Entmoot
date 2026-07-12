@@ -34,6 +34,21 @@ struct Args {
     /// Maximum accepted MQTT packet size in bytes
     #[arg(long)]
     max_packet_size: Option<usize>,
+    /// Maximum rate (per second) of newly admitted CONNECTs; beyond this,
+    /// CONNECT is refused with ServiceUnavailable instead of processed. 0 = unlimited
+    #[arg(long)]
+    connect_admission_rate: Option<u32>,
+    /// Burst allowance for --connect-admission-rate
+    #[arg(long)]
+    connect_admission_burst: Option<u32>,
+    /// Default staleness bound (seconds) for retained-message delivery; 0 = disabled.
+    /// Per-namespace overrides are config-file only (see config.example.toml).
+    #[arg(long)]
+    retained_staleness_secs: Option<u64>,
+    /// Cap Zenoh's own wire batch size (its MTU equivalent) in bytes; measure
+    /// the real path MTU first with scripts/mtu-sweep.sh. Absent = Zenoh default.
+    #[arg(long)]
+    zenoh_link_mtu: Option<u16>,
 }
 
 #[tokio::main]
@@ -76,6 +91,18 @@ async fn main() -> Result<()> {
     }
     if let Some(mps) = args.max_packet_size {
         cfg.max_packet_size = mps;
+    }
+    if let Some(rate) = args.connect_admission_rate {
+        cfg.connect_admission_rate = rate;
+    }
+    if let Some(burst) = args.connect_admission_burst {
+        cfg.connect_admission_burst = burst;
+    }
+    if let Some(secs) = args.retained_staleness_secs {
+        cfg.retained_staleness_secs = secs;
+    }
+    if let Some(mtu) = args.zenoh_link_mtu {
+        cfg.zenoh_link_mtu = Some(mtu);
     }
 
     if cfg.auth.allow_anonymous && cfg.auth.users.is_empty() {

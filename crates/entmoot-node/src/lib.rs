@@ -5,12 +5,14 @@
 //! through Zenoh, so there is exactly one routing path and loops are
 //! impossible by construction.
 
+mod admission;
 mod connection;
 mod health;
 mod metrics;
 mod retained;
 mod session;
 
+pub use admission::ConnectAdmission;
 pub use metrics::Metrics;
 pub use retained::RetainedStore;
 pub use session::SessionRegistry;
@@ -37,6 +39,8 @@ pub struct Broker {
     pub retained: Arc<RetainedStore>,
     pub registry: SessionRegistry,
     pub metrics: Metrics,
+    pub connect_admission: ConnectAdmission,
+    pub staleness: entmoot_core::staleness::StalenessPolicy,
     conn_count: AtomicUsize,
 }
 
@@ -78,6 +82,13 @@ fn zenoh_config(cfg: &NodeConfig) -> Result<zenoh::Config> {
     set(&mut zc, "scouting/multicast/enabled", "false".into())?;
     set(&mut zc, "listen/endpoints", to_json_array(&cfg.zenoh_listen))?;
     set(&mut zc, "connect/endpoints", to_json_array(&cfg.peers))?;
+    // Transport hygiene (RESILIENCE_ROADMAP.md workstream 5): clamp Zenoh's
+    // wire batch size below the real path MTU when one is configured, so a
+    // Nebula/tunnel link with a smaller MTU than 65535 never has Zenoh hand
+    // it a batch that gets silently IP-fragmented.
+    if let Some(mtu) = cfg.zenoh_link_mtu {
+        set(&mut zc, "transport/link/tx/batch_size", mtu.to_string())?;
+    }
     Ok(zc)
 }
 
@@ -225,6 +236,11 @@ pub async fn run(cfg: NodeConfig) -> Result<BrokerHandle> {
             queue_dir,
         ),
         metrics: Metrics::default(),
+        connect_admission: ConnectAdmission::new(cfg.connect_admission_rate, cfg.connect_admission_burst),
+        staleness: entmoot_core::staleness::StalenessPolicy::new(
+            cfg.staleness.clone(),
+            cfg.retained_staleness_secs,
+        ),
         session,
         cfg,
         conn_count: AtomicUsize::new(0),

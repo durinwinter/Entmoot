@@ -16,6 +16,17 @@ session_expiry_secs = 86400      # discard offline persistent sessions after thi
 max_queued_per_session = 1000    # offline QoS 1 queue bound per persistent session
 slow_consumer_grace_ms = 5000     # evict a client whose outbound queue stays full this long; 0 = never
 sys_interval_secs = 10            # publish $SYS/broker/<id>/... node stats; 0 = off
+connect_admission_rate = 0        # max new CONNECTs/s let through to auth/session work; 0 = off
+connect_admission_burst = 0       # burst allowance for connect_admission_rate; clamped to >= the rate
+retained_staleness_secs = 0       # default staleness bound for retained delivery; 0 = off ($meta/<topic> if exceeded)
+
+# Per-namespace staleness overrides; first match wins, else retained_staleness_secs applies.
+# [[staleness]]
+# filter = "plant/kiln1/#"
+# bound_secs = 5
+
+# zenoh_link_mtu = 1200            # cap Zenoh's wire batch size in bytes; measure the real
+                                    # path MTU first with scripts/mtu-sweep.sh. Unset = Zenoh default (65535).
 
 [tls]                             # remove this section for plain MQTT only
 listen = "0.0.0.0:8883"

@@ -7,11 +7,14 @@
 //! full PUBREC/PUBREL/PUBCOMP handshake but relayed with at-least-once
 //! semantics across the mesh.
 //!
-//! Hardening enforced here: password or client-cert auth on CONNECT,
-//! per-identity topic ACLs (denied publishes are dropped and logged,
-//! mosquitto-style, to avoid reconnect storms from misconfigured devices;
-//! denied subscriptions get a SUBACK failure), and a per-connection publish
-//! rate limit whose violators are disconnected.
+//! Hardening enforced here: connect-admission control (CONNECTs beyond the
+//! configured rate are refused with `ServiceUnavailable` before any auth or
+//! session work, ahead of the reconnect-storm path in `admission.rs`),
+//! password or client-cert auth on CONNECT, per-identity topic ACLs (denied
+//! publishes are dropped and logged, mosquitto-style, to avoid reconnect
+//! storms from misconfigured devices; denied subscriptions get a SUBACK
+//! failure), and a per-connection publish rate limit whose violators are
+//! disconnected.
 
 use crate::metrics::Metrics;
 use crate::session::{activate_subscription, SessionState};
@@ -28,7 +31,7 @@ use mqttbytes::QoS;
 use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadHalf};
 use tokio::sync::{mpsc, Notify};
 use tokio::task::JoinHandle;
@@ -57,6 +60,14 @@ where
         Ok(Err(e)) => return Err(e).context("reading CONNECT"),
         Err(_) => bail!("client sent no CONNECT within {CONNECT_TIMEOUT:?}"),
     };
+
+    if !broker.connect_admission.admit() {
+        warn!(addr = %peer, "CONNECT shed: connect-admission rate exceeded");
+        Metrics::bump(&broker.metrics.connect_shed_total);
+        conn.write_packet(&Packet::ConnAck(ConnAck::new(ConnectReturnCode::ServiceUnavailable, false)))
+            .await?;
+        return Ok(());
+    }
 
     let identity = match cert_identity {
         Some(cn) => {
@@ -112,6 +123,7 @@ where
         keep_alive = connect.keep_alive,
         "client connected"
     );
+    publish_client_event(&broker, &client_id, &format!("connect addr={peer} clean={clean}")).await;
 
     // Offline backlog drains first, before any live traffic (all QoS 1: only
     // QoS 1 subscriptions queue while offline).
@@ -142,7 +154,25 @@ where
     }
     broker.registry.detach(&attach.session, attach.epoch, clean);
     info!(client = %client.id, "client disconnected");
+    let reason = if result.is_ok() { "clean" } else { "abnormal" };
+    publish_client_event(&broker, &client.id, &format!("disconnect reason={reason}")).await;
     result
+}
+
+/// Emit a client lifecycle event onto `$meta/clients/<node-id>/<client-id>`
+/// (RESILIENCE_ROADMAP.md workstream 6): so a visualizer keys client
+/// liveness off actual MQTT session activity — carried over Zenoh's own
+/// session keepalives — rather than guessing from tunnel/link state, which
+/// says nothing about whether a given MQTT client is still there. Routed
+/// through the normal mesh-wide pub/sub path, like `$SYS` and `$meta/<topic>`
+/// staleness: any session subscribed to `$meta/clients/#` sees it, gated by
+/// the same ACLs as everything else. Not retained: these are lifecycle
+/// events, not current state.
+async fn publish_client_event(broker: &Broker, client_id: &str, event: &str) {
+    let ke = topic::meta_keyexpr(&format!("clients/{}/{client_id}", broker.cfg.id), &broker.cfg.scope);
+    if let Err(e) = broker.session.put(&ke, event.as_bytes().to_vec()).await {
+        warn!(client = client_id, "client meta event publish failed: {e}");
+    }
 }
 
 struct Client {
@@ -224,6 +254,7 @@ impl Client {
                 Packet::Unsubscribe(unsub) => {
                     for t in &unsub.topics {
                         self.session.remove_sub(t);
+                        publish_client_event(&self.broker, &self.id, &format!("unsubscribe filter={t}")).await;
                     }
                     send(&writer_tx, Packet::UnsubAck(UnsubAck::new(unsub.pkid))).await?;
                 }
@@ -275,7 +306,8 @@ impl Client {
                 let res = if p.payload.is_empty() {
                     self.broker.session.delete(&rke).await
                 } else {
-                    self.broker.session.put(&rke, p.payload.to_vec()).await
+                    let envelope = crate::retained::encode_envelope(&p.payload, SystemTime::now());
+                    self.broker.session.put(&rke, envelope).await
                 };
                 res.map_err(|e| anyhow!("retained write on {rke}: {e}"))?;
             }
@@ -321,20 +353,47 @@ impl Client {
             warn!(client = %self.id, filter, "zenoh subscriber failed: {e}");
             return SubscribeReasonCode::Failure;
         }
+        Metrics::bump(&self.broker.metrics.subscribes_total);
+        publish_client_event(&self.broker, &self.id, &format!("subscribe filter={filter} qos={granted:?}")).await;
         SubscribeReasonCode::Success(granted)
     }
 
     async fn deliver_retained(&self, filter: &str, qos: QoS, writer_tx: &Writer) -> Result<()> {
-        for (topic_name, payload) in self.broker.retained.matching(filter) {
-            let mut p = Publish::new(&topic_name, qos, payload);
+        let matches = self.broker.retained.matching_cached(filter).await;
+        for (topic_name, payload, written_at) in matches.iter() {
+            let mut p = Publish::new(topic_name, qos, payload.clone());
             p.retain = true;
             if qos != QoS::AtMostOnce {
                 p.pkid = self.session.next_pkid();
             }
             send(writer_tx, Packet::Publish(p)).await?;
             Metrics::bump(&self.broker.metrics.messages_out_total);
+            self.flag_if_stale(topic_name, *written_at).await;
         }
         Ok(())
+    }
+
+    /// During a partition heal a retained value may be correct-but-old rather
+    /// than current; if this topic's age exceeds its staleness bound, tell
+    /// anyone listening on `$meta/<topic>` rather than let the plain retained
+    /// delivery imply freshness. Routed through the normal mesh-wide pub/sub
+    /// path (like `$SYS`), so it reaches every subscribed session, not just
+    /// this one connection, and only those that actually asked for it.
+    async fn flag_if_stale(&self, topic_name: &str, written_at: SystemTime) {
+        let bound = self.broker.staleness.bound_secs(topic_name);
+        if bound == 0 {
+            return;
+        }
+        let age = SystemTime::now().duration_since(written_at).unwrap_or_default();
+        if age < Duration::from_secs(bound) {
+            return;
+        }
+        let meta_ke = topic::meta_keyexpr(topic_name, &self.broker.cfg.scope);
+        let msg = format!("stale=true age_secs={} bound_secs={bound}", age.as_secs());
+        if let Err(e) = self.broker.session.put(&meta_ke, msg.into_bytes()).await {
+            warn!(topic = topic_name, "staleness meta publish failed: {e}");
+        }
+        Metrics::bump(&self.broker.metrics.stale_retained_total);
     }
 
     async fn fire_will(&mut self) {
@@ -352,7 +411,8 @@ impl Client {
                 }
                 if will.retain && !will.message.is_empty() {
                     let rke = topic::retained_keyexpr(&will.topic, &self.broker.cfg.scope);
-                    self.broker.session.put(&rke, will.message.to_vec()).await.ok();
+                    let envelope = crate::retained::encode_envelope(&will.message, SystemTime::now());
+                    self.broker.session.put(&rke, envelope).await.ok();
                 }
             }
             Err(e) => warn!(client = %self.id, "will topic invalid: {e}"),

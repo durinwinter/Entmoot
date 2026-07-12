@@ -4,8 +4,10 @@ A distributed industrial MQTT databus: a mesh of small Rust nodes replaces a mon
 broker (HiveMQ/EMQX). Each node speaks standard MQTT 3.1.1 to clients and uses the
 Entmoot bus as the inter-node backbone — a publish on any node reaches subscribers on
 every node, with no consensus cluster and no shared database. See [PLAN.md](PLAN.md)
-for the architecture and phase roadmap, and [ENTERPRISE_ROADMAP.md](ENTERPRISE_ROADMAP.md)
-for the open-source enterprise feature track.
+for the architecture and phase roadmap, [ENTERPRISE_ROADMAP.md](ENTERPRISE_ROADMAP.md)
+for the open-source enterprise feature track, and
+[RESILIENCE_ROADMAP.md](RESILIENCE_ROADMAP.md) for reconnect-storm, partition,
+and chaos-testing work.
 
 ## Build note (this machine)
 
@@ -39,7 +41,17 @@ It is static HTML/CSS/JS with no build step and exports TOML shaped for
 `entmoot --config`. The console borrows the Fendtastic frontend's ent-shell
 visual language using resized WebP assets under `web/assets/` to keep the first
 load small. The Grove view sketches broker nodes, planned client groups, and
-per-node client capacity so distributed deployments are easier to reason about.
+per-node client capacity so distributed deployments are easier to reason about
+— today from the config being edited, not live telemetry.
+
+A live visualizer built against this bus should key client liveness off
+actual MQTT session activity, not tunnel/link state (a Nebula tunnel being up
+says nothing about whether a given MQTT client is still connected). Nodes
+publish connect/subscribe/unsubscribe/disconnect events on
+`$meta/clients/<node-id>/<client-id>` for exactly this — but that's an
+Entmoot fork behavior: a stock Zenoh peer has no MQTT client concept to
+report on, so client-level fidelity in any dashboard requires pointing it at
+this fork specifically, not a vanilla Zenoh deployment.
 
 ```sh
 python3 -m http.server 4173 -d web
@@ -88,3 +100,22 @@ and all — at startup, before the client reconnects, with ACLs re-checked again
 current config), Prometheus `/metrics`, Kubernetes `/healthz` + `/readyz`, and
 `$SYS/broker/<id>/…` node stats. Not yet: TLS cert rotation, MQTT 5 — remaining
 Phase 1c items in [PLAN.md](PLAN.md).
+
+Reconnect-storm protection: connect-admission control (`connect_admission_rate`)
+sheds excess CONNECTs with a legible `ServiceUnavailable` ahead of
+`max_connections`, and concurrent SUBSCRIBEs sharing a filter coalesce into
+one retained-store scan instead of one per client. Partition staleness:
+retained deliveries past `retained_staleness_secs` get a `$meta/<topic>`
+companion flag instead of being presented as current. Fault injection for
+both: [chaos/](chaos/) has a Toxiproxy-fronted mesh + partition/heal/storm
+script runnable today, and Chaos Mesh manifests for once Phase 2 packaging
+ships. `cargo run -p entmoot-node --example storm_bench` measures recovery
+(live-traffic latency during a storm, time-to-rehydration, retained-scan
+fan-out ratio) against any running node. `zenoh_link_mtu` caps Zenoh's wire
+batch size below a link's real path MTU (`scripts/mtu-sweep.sh` finds it) so
+fragmentation doesn't pollute those numbers. Client connect/subscribe/
+disconnect events publish on `$meta/clients/<node-id>/<client-id>` for a
+future live visualizer to key liveness off. See
+[RESILIENCE_ROADMAP.md](RESILIENCE_ROADMAP.md) for the full six-workstream
+plan — all six workstreams are done, with real gaps/tradeoffs found along
+the way called out rather than glossed over.

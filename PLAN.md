@@ -89,7 +89,9 @@ Done (Phase 1a):
   misconfigured PLC doesn't retry-storm); wills are ACL-checked too. Subscription
   grants use conservative filter-coverage (`plant/#` covers `plant/+/temp`).
 - ✅ MQTT over TLS (8883) via rustls (provider pinned; zenoh links can use `tls/`
-  endpoints via zenoh config).
+  endpoints via zenoh config — see RESILIENCE_ROADMAP.md workstream 5 for
+  when that's the right call vs. plain `tcp/` inside an already-encrypting
+  overlay).
 - ✅ Overload protection: per-connection publish rate limit (token bucket,
   violators disconnected) and a max-connections cap.
 - ✅ TOML config file (`config.example.toml`) with CLI overrides.
@@ -131,6 +133,47 @@ Remaining (Phase 1c):
 
 - TLS cert rotation / reload without restart.
 - MQTT 5 (via `mqttbytes::v5`): session expiry, shared subscriptions, reason codes.
+
+### Reconnect-storm protection
+
+Phase 1's persistent-session rehydration means a partition heal or node
+restart brings every affected client back at once, all resuming sessions and
+re-subscribing (with MQTT-3.3.1-8 retained delivery on every SUBACK). Two
+defenses, detailed in [RESILIENCE_ROADMAP.md](RESILIENCE_ROADMAP.md):
+
+- ✅ Connect-admission control: a GCRA rate limiter (`connect_admission_rate`
+  / `connect_admission_burst`) gates how fast new CONNECTs enter auth/session
+  work, refusing the excess with `ServiceUnavailable` — a legible signal
+  instead of a bare TCP refusal — ahead of the existing `max_connections`
+  cap. Off by default (rate 0).
+- ✅ Retained-match coalescing: concurrent SUBSCRIBEs sharing a filter (the
+  reconnect-storm shape) share one retained-store scan via a `moka` cache
+  with singleflight semantics, instead of each client re-scanning
+  independently. `entmoot_retained_scans_total` vs. `entmoot_subscribes_total`
+  in `/metrics` is the fan-out ratio this collapses.
+
+### Partition staleness
+
+A value that survived a partition is correct-but-old, not current. Every
+retained entry now carries its origin write time; `retained_staleness_secs`
+(plus per-filter `[[staleness]]` overrides) defines how old is too old, and a
+delivery past that bound gets a `$meta/<topic>` companion message
+(`stale=true age_secs=<n> bound_secs=<m>`) alongside the normal retained
+PUBLISH, delivered to anyone subscribed to `$meta/#` — a new reserved topic
+space mirroring `$SYS` (unforgeable, invisible to bare wildcards per
+MQTT-4.7.2-1). Off by default (`retained_staleness_secs = 0`). See
+[RESILIENCE_ROADMAP.md](RESILIENCE_ROADMAP.md) for why this rides in the
+payload rather than Zenoh's own sample timestamp.
+
+### Client visibility for visualizers
+
+Every CONNECT, SUBSCRIBE, UNSUBSCRIBE, and disconnect is published on
+`$meta/clients/<node-id>/<client-id>` — the same mesh-wide pub/sub path as
+`$SYS`, ACL-gated the same way. A live dashboard should key client liveness
+off this (actual MQTT session activity, carried over Zenoh's own session
+keepalives), not off tunnel/link state, which says nothing about whether a
+specific MQTT client is still connected. This is fork-specific: a stock
+Zenoh peer has no MQTT client concept to report on.
 
 ### Why not OpenZiti for this?
 
