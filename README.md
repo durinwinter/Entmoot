@@ -1,7 +1,7 @@
 # Entmoot
 
 A distributed industrial MQTT databus: a mesh of small Rust nodes replaces a monolithic
-broker (HiveMQ/EMQX). Each node speaks standard MQTT 3.1.1 to clients and uses the
+broker. Each node speaks standard MQTT 3.1.1 to clients and uses the
 Entmoot bus as the inter-node backbone — a publish on any node reaches subscribers on
 every node, with no consensus cluster and no shared database. See [PLAN.md](PLAN.md)
 for the architecture and phase roadmap, [ENTERPRISE_ROADMAP.md](ENTERPRISE_ROADMAP.md)
