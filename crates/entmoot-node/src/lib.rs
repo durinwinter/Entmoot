@@ -82,6 +82,13 @@ fn zenoh_config(cfg: &NodeConfig) -> Result<zenoh::Config> {
     set(&mut zc, "scouting/multicast/enabled", "false".into())?;
     set(&mut zc, "listen/endpoints", to_json_array(&cfg.zenoh_listen))?;
     set(&mut zc, "connect/endpoints", to_json_array(&cfg.peers))?;
+    // Transport hygiene (RESILIENCE_ROADMAP.md workstream 5): clamp Zenoh's
+    // wire batch size below the real path MTU when one is configured, so a
+    // Nebula/tunnel link with a smaller MTU than 65535 never has Zenoh hand
+    // it a batch that gets silently IP-fragmented.
+    if let Some(mtu) = cfg.zenoh_link_mtu {
+        set(&mut zc, "transport/link/tx/batch_size", mtu.to_string())?;
+    }
     Ok(zc)
 }
 

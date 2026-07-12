@@ -25,6 +25,9 @@ retained_staleness_secs = 0       # default staleness bound for retained deliver
 # filter = "plant/kiln1/#"
 # bound_secs = 5
 
+# zenoh_link_mtu = 1200            # cap Zenoh's wire batch size in bytes; measure the real
+                                    # path MTU first with scripts/mtu-sweep.sh. Unset = Zenoh default (65535).
+
 [tls]                             # remove this section for plain MQTT only
 listen = "0.0.0.0:8883"
 cert_file = "/etc/entmoot/server.pem"

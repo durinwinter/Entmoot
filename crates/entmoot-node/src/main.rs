@@ -45,6 +45,10 @@ struct Args {
     /// Per-namespace overrides are config-file only (see config.example.toml).
     #[arg(long)]
     retained_staleness_secs: Option<u64>,
+    /// Cap Zenoh's own wire batch size (its MTU equivalent) in bytes; measure
+    /// the real path MTU first with scripts/mtu-sweep.sh. Absent = Zenoh default.
+    #[arg(long)]
+    zenoh_link_mtu: Option<u16>,
 }
 
 #[tokio::main]
@@ -96,6 +100,9 @@ async fn main() -> Result<()> {
     }
     if let Some(secs) = args.retained_staleness_secs {
         cfg.retained_staleness_secs = secs;
+    }
+    if let Some(mtu) = args.zenoh_link_mtu {
+        cfg.zenoh_link_mtu = Some(mtu);
     }
 
     if cfg.auth.allow_anonymous && cfg.auth.users.is_empty() {

@@ -101,7 +101,8 @@ both: [chaos/](chaos/) has a Toxiproxy-fronted mesh + partition/heal/storm
 script runnable today, and Chaos Mesh manifests for once Phase 2 packaging
 ships. `cargo run -p entmoot-node --example storm_bench` measures recovery
 (live-traffic latency during a storm, time-to-rehydration, retained-scan
-fan-out ratio) against any running node. See
+fan-out ratio) against any running node. `zenoh_link_mtu` caps Zenoh's wire
+batch size below a link's real path MTU (`scripts/mtu-sweep.sh` finds it) so
+fragmentation doesn't pollute those numbers. See
 [RESILIENCE_ROADMAP.md](RESILIENCE_ROADMAP.md) for the full six-workstream
-plan (workstreams 1-4 done; transport hygiene and visualizer honesty are
-still open).
+plan (workstreams 1-5 done; visualizer honesty is still open).

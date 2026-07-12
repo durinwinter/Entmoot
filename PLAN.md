@@ -89,7 +89,9 @@ Done (Phase 1a):
   misconfigured PLC doesn't retry-storm); wills are ACL-checked too. Subscription
   grants use conservative filter-coverage (`plant/#` covers `plant/+/temp`).
 - ✅ MQTT over TLS (8883) via rustls (provider pinned; zenoh links can use `tls/`
-  endpoints via zenoh config).
+  endpoints via zenoh config — see RESILIENCE_ROADMAP.md workstream 5 for
+  when that's the right call vs. plain `tcp/` inside an already-encrypting
+  overlay).
 - ✅ Overload protection: per-connection publish rate limit (token bucket,
   violators disconnected) and a max-connections cap.
 - ✅ TOML config file (`config.example.toml`) with CLI overrides.

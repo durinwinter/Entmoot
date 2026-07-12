@@ -11,7 +11,7 @@ change the architecture land before the ones that just measure it:
 2. partition merge semantics / staleness ← done
 3. cluster-level fault injection         ← done
 4. benchmarking methodology              ← done
-5. Nebula/transport hygiene
+5. Nebula/transport hygiene              ← done
 6. visualizer honesty
 ```
 
@@ -186,13 +186,40 @@ Matrix (run manually today; a driver script that shells out to
 built): {partition 10s/60s/10min} × {1k/10k clients} × {single-site/two-site
 over Nebula}.
 
-## 5. Nebula/transport hygiene — not started
+## 5. Nebula/transport hygiene — done
 
-Clamp MTU deliberately (path-MTU sweep inside the tunnel, Zenoh QUIC datagram
-size below it, iperf3 full-size-payload verification) before any benchmark
-number is trusted. Document the double-encryption call explicitly: intra-
-Nebula links can run Zenoh plaintext (Noise already provides confidentiality
-+ identity), TLS reserved for segments that leave the overlay.
+Nebula itself isn't part of this codebase (it's an assumption about the
+deployment this fork runs in, not something Entmoot integrates with
+directly) — what shipped here is the codebase-side half: a real MTU clamp
+and the double-encryption decision written down.
+
+- **MTU clamp:** `zenoh_link_mtu` (config) / `--zenoh-link-mtu` (CLI) caps
+  Zenoh's own wire batch size — its MTU equivalent
+  (`transport/link/tx/batch_size` under the hood, verified against the real
+  zenoh-1.9 config schema, not guessed) — below a link's real path MTU.
+  Matters most for TCP bus links (what Entmoot actually uses today; there's
+  no QUIC endpoint anywhere in this codebase yet): a QUIC-datagram link would
+  auto-negotiate its own MTU from the underlying QUIC connection, but plain
+  TCP has no such negotiation, so an oversized Zenoh batch over a
+  small-MTU tunnel just gets silently IP-fragmented — and fragmented
+  traffic pollutes every latency/throughput number until someone thinks to
+  check for it. `scripts/mtu-sweep.sh` does the `ping -M do` binary search
+  the plan called for to find the real number; `scripts/iperf3-fragmentation-check.sh`
+  verifies full-size payloads survive it. A test
+  (`crates/entmoot-node/tests/transport.rs`) proves a >65KB-analog payload
+  (well over a clamped 1200-byte batch size) still crosses the mesh
+  correctly — Zenoh's own fragmentation across multiple batches, not ours.
+- **Double-encryption decision, written down:** if an Entmoot bus link runs
+  entirely inside a Noise-secured overlay (Nebula or otherwise), plain `tcp/`
+  Zenoh endpoints are the deliberate, correct choice — the overlay already
+  provides confidentiality and peer identity, and a second TLS handshake on
+  top adds CPU cost with no additional security in that specific topology.
+  Zenoh does support `tls/` bus endpoints (PLAN.md), and that's the right
+  choice for any bus link that leaves the overlay rather than staying inside
+  it — same logic already applied to the MQTT client-facing port, which has
+  supported TLS/mTLS since Phase 1a. The point of writing this down is that
+  it should be a deliberate per-link decision an operator makes, not a
+  default nobody thought about either way.
 
 ## 6. Visualizer honesty — not started
 

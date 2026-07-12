@@ -62,6 +62,16 @@ pub struct NodeConfig {
     /// Per-topic-filter overrides for `retained_staleness_secs`; the first
     /// matching rule (in list order) wins, else the default above applies.
     pub staleness: Vec<StalenessRule>,
+    /// Caps Zenoh's own wire batch size (its MTU equivalent) in bytes —
+    /// `transport/link/tx/batch_size` in Zenoh's config, max 65535. Set this
+    /// below the real path MTU of a link (measure with a `ping -M do` sweep;
+    /// see `scripts/mtu-sweep.sh`) to keep Zenoh from ever assembling a batch
+    /// IP fragmentation would otherwise silently split, which pollutes every
+    /// latency/throughput number until it's found. Absent = Zenoh's own
+    /// default (65535; QUIC-datagram links additionally auto-negotiate their
+    /// own MTU from the QUIC connection, so this matters most for TCP links,
+    /// which don't).
+    pub zenoh_link_mtu: Option<u16>,
     /// MQTT-over-TLS listener; absent = plain MQTT only.
     pub tls: Option<TlsConfig>,
     pub auth: AuthConfig,
@@ -91,6 +101,7 @@ impl Default for NodeConfig {
             connect_admission_burst: 0,
             retained_staleness_secs: 0,
             staleness: Vec::new(),
+            zenoh_link_mtu: None,
             tls: None,
             auth: AuthConfig::default(),
             acl: Vec::new(),
