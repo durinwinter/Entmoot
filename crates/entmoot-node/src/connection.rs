@@ -123,6 +123,7 @@ where
         keep_alive = connect.keep_alive,
         "client connected"
     );
+    publish_client_event(&broker, &client_id, &format!("connect addr={peer} clean={clean}")).await;
 
     // Offline backlog drains first, before any live traffic (all QoS 1: only
     // QoS 1 subscriptions queue while offline).
@@ -153,7 +154,25 @@ where
     }
     broker.registry.detach(&attach.session, attach.epoch, clean);
     info!(client = %client.id, "client disconnected");
+    let reason = if result.is_ok() { "clean" } else { "abnormal" };
+    publish_client_event(&broker, &client.id, &format!("disconnect reason={reason}")).await;
     result
+}
+
+/// Emit a client lifecycle event onto `$meta/clients/<node-id>/<client-id>`
+/// (RESILIENCE_ROADMAP.md workstream 6): so a visualizer keys client
+/// liveness off actual MQTT session activity — carried over Zenoh's own
+/// session keepalives — rather than guessing from tunnel/link state, which
+/// says nothing about whether a given MQTT client is still there. Routed
+/// through the normal mesh-wide pub/sub path, like `$SYS` and `$meta/<topic>`
+/// staleness: any session subscribed to `$meta/clients/#` sees it, gated by
+/// the same ACLs as everything else. Not retained: these are lifecycle
+/// events, not current state.
+async fn publish_client_event(broker: &Broker, client_id: &str, event: &str) {
+    let ke = topic::meta_keyexpr(&format!("clients/{}/{client_id}", broker.cfg.id), &broker.cfg.scope);
+    if let Err(e) = broker.session.put(&ke, event.as_bytes().to_vec()).await {
+        warn!(client = client_id, "client meta event publish failed: {e}");
+    }
 }
 
 struct Client {
@@ -235,6 +254,7 @@ impl Client {
                 Packet::Unsubscribe(unsub) => {
                     for t in &unsub.topics {
                         self.session.remove_sub(t);
+                        publish_client_event(&self.broker, &self.id, &format!("unsubscribe filter={t}")).await;
                     }
                     send(&writer_tx, Packet::UnsubAck(UnsubAck::new(unsub.pkid))).await?;
                 }
@@ -334,6 +354,7 @@ impl Client {
             return SubscribeReasonCode::Failure;
         }
         Metrics::bump(&self.broker.metrics.subscribes_total);
+        publish_client_event(&self.broker, &self.id, &format!("subscribe filter={filter} qos={granted:?}")).await;
         SubscribeReasonCode::Success(granted)
     }
 

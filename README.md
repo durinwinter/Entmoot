@@ -41,7 +41,17 @@ It is static HTML/CSS/JS with no build step and exports TOML shaped for
 `entmoot --config`. The console borrows the Fendtastic frontend's ent-shell
 visual language using resized WebP assets under `web/assets/` to keep the first
 load small. The Grove view sketches broker nodes, planned client groups, and
-per-node client capacity so distributed deployments are easier to reason about.
+per-node client capacity so distributed deployments are easier to reason about
+— today from the config being edited, not live telemetry.
+
+A live visualizer built against this bus should key client liveness off
+actual MQTT session activity, not tunnel/link state (a Nebula tunnel being up
+says nothing about whether a given MQTT client is still connected). Nodes
+publish connect/subscribe/unsubscribe/disconnect events on
+`$meta/clients/<node-id>/<client-id>` for exactly this — but that's an
+Entmoot fork behavior: a stock Zenoh peer has no MQTT client concept to
+report on, so client-level fidelity in any dashboard requires pointing it at
+this fork specifically, not a vanilla Zenoh deployment.
 
 ```sh
 python3 -m http.server 4173 -d web
@@ -103,6 +113,9 @@ ships. `cargo run -p entmoot-node --example storm_bench` measures recovery
 (live-traffic latency during a storm, time-to-rehydration, retained-scan
 fan-out ratio) against any running node. `zenoh_link_mtu` caps Zenoh's wire
 batch size below a link's real path MTU (`scripts/mtu-sweep.sh` finds it) so
-fragmentation doesn't pollute those numbers. See
+fragmentation doesn't pollute those numbers. Client connect/subscribe/
+disconnect events publish on `$meta/clients/<node-id>/<client-id>` for a
+future live visualizer to key liveness off. See
 [RESILIENCE_ROADMAP.md](RESILIENCE_ROADMAP.md) for the full six-workstream
-plan (workstreams 1-5 done; visualizer honesty is still open).
+plan — all six workstreams are done, with real gaps/tradeoffs found along
+the way called out rather than glossed over.

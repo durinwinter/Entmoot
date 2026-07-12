@@ -12,8 +12,14 @@ change the architecture land before the ones that just measure it:
 3. cluster-level fault injection         ← done
 4. benchmarking methodology              ← done
 5. Nebula/transport hygiene              ← done
-6. visualizer honesty
+6. visualizer honesty                    ← done
 ```
+
+All six workstreams from the original plan are implemented, tested, and
+documented as of this writing. Real gaps and tradeoffs discovered along the
+way are called out in each section below rather than glossed over — this
+plan optimized for shipping a working, honest v1 of each workstream over a
+theoretically complete one.
 
 ## 1. Reconnect storm / rehydration herd — done
 
@@ -221,10 +227,44 @@ and the double-encryption decision written down.
   it should be a deliberate per-link decision an operator makes, not a
   default nobody thought about either way.
 
-## 6. Visualizer honesty — not started
+## 6. Visualizer honesty — done
 
-Key liveness off Zenoh session keepalives, not tunnel state. Emit this fork's
-client connect/disconnect/subscription events onto `meta/clients/…` so the
-visualizer consumes the same bus as everything else, and document that
-client-level fidelity requires this fork (a stock Zenoh peer has no MQTT
-client concept to report on).
+Every CONNECT, SUBSCRIBE, UNSUBSCRIBE, and disconnect now publishes a plain-
+text event on `$meta/clients/<node-id>/<client-id>`
+(`crates/entmoot-node/src/connection.rs`), reusing the same `$meta`
+reserved-namespace mechanism workstream 2 built for staleness (and the same
+pattern `$SYS` already established): mesh-wide `session.put`, ACL-gated
+exactly like every other topic, not retained (these are lifecycle events,
+not current state). Payloads: `connect addr=<addr> clean=<bool>`,
+`subscribe filter=<f> qos=<q>`, `unsubscribe filter=<f>`,
+`disconnect reason=clean|abnormal`. Tested in
+`crates/entmoot-node/tests/client_events.rs`.
+
+**What "visualizer honesty" means here, concretely:** the existing Canopy
+Console (`web/`) is a static config-authoring tool today — it renders
+*planned* topology from whatever's being typed into the form, not live
+telemetry from a running mesh, and building it into an actual live
+Zenoh-consuming dashboard (browser-side Zenoh/MQTT client, a REST or
+WebSocket bridge, a real rendering pipeline) is a materially different,
+larger project than what the plan described. What shipped here is exactly
+what the plan asked for: the backend signal a future live visualizer should
+key off, plus the documented principle (README, PLAN.md) — key liveness off
+this bus, not off whether the underlying tunnel/link is up, since link state
+says nothing about whether a specific MQTT client is still connected — and
+the explicit callout that this is fork-specific: a stock Zenoh peer has no
+MQTT client concept to report on `$meta/clients/` about.
+
+**A cost worth naming, found by running the test suite, not hypothesized:**
+putting client lifecycle events on the same `$meta` namespace as workstream
+2's staleness flags meant the staleness tests' `$meta/#` subscription
+started seeing its own connect/subscribe noise too, breaking the "exactly
+one companion message" assumption in three tests — fixed by having the
+tests filter on the specific topic they care about rather than assuming
+event count or order (see the module doc in `tests/staleness.rs`). The same
+reasoning applies in production: a dashboard subscribed to `$meta/#` gets
+both staleness flags and client lifecycle events interleaved and needs to
+distinguish them by topic (`$meta/clients/…` vs. `$meta/<data-topic>`), which
+it can, but it's worth knowing going in. Subscribe/unsubscribe events are
+also amplified 1:1 with SUBSCRIBE/UNSUBSCRIBE traffic with no debounce, same
+accepted tradeoff as the staleness meta signal in workstream 2 — real cost
+under a reconnect storm, not free observability.

@@ -165,6 +165,16 @@ MQTT-4.7.2-1). Off by default (`retained_staleness_secs = 0`). See
 [RESILIENCE_ROADMAP.md](RESILIENCE_ROADMAP.md) for why this rides in the
 payload rather than Zenoh's own sample timestamp.
 
+### Client visibility for visualizers
+
+Every CONNECT, SUBSCRIBE, UNSUBSCRIBE, and disconnect is published on
+`$meta/clients/<node-id>/<client-id>` — the same mesh-wide pub/sub path as
+`$SYS`, ACL-gated the same way. A live dashboard should key client liveness
+off this (actual MQTT session activity, carried over Zenoh's own session
+keepalives), not off tunnel/link state, which says nothing about whether a
+specific MQTT client is still connected. This is fork-specific: a stock
+Zenoh peer has no MQTT client concept to report on.
+
 ### Why not OpenZiti for this?
 
 Considered and parked: OpenZiti is a zero-trust *connectivity* overlay (identity-based
