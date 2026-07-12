@@ -24,6 +24,7 @@ pub struct Metrics {
     pub publish_denied_total: AtomicU64,
     pub subscribe_denied_total: AtomicU64,
     pub subscribes_total: AtomicU64,
+    pub stale_retained_total: AtomicU64,
     pub rate_limit_disconnects_total: AtomicU64,
     pub slow_consumer_evictions_total: AtomicU64,
 }
@@ -55,6 +56,7 @@ pub fn render(broker: &Broker) -> String {
     metric("subscribe_denied_total", "counter", "Subscriptions refused by ACL or validation", c(&m.subscribe_denied_total));
     metric("subscribes_total", "counter", "Subscriptions granted", c(&m.subscribes_total));
     metric("retained_scans_total", "counter", "Retained-store scans performed (denominator for the reconnect-storm coalescing ratio: scans / subscribes_total)", broker.retained.scan_count());
+    metric("stale_retained_total", "counter", "Retained deliveries flagged stale on $meta/<topic> (partition-heal staleness bound exceeded)", c(&m.stale_retained_total));
     metric("rate_limit_disconnects_total", "counter", "Clients disconnected for exceeding the publish rate", c(&m.rate_limit_disconnects_total));
     metric("slow_consumer_evictions_total", "counter", "Clients evicted because their outbound queue stayed full", c(&m.slow_consumer_evictions_total));
     metric("retained_messages", "gauge", "Retained messages replicated on this node", broker.retained.len() as u64);

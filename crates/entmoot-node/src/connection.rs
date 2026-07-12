@@ -31,7 +31,7 @@ use mqttbytes::QoS;
 use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadHalf};
 use tokio::sync::{mpsc, Notify};
 use tokio::task::JoinHandle;
@@ -286,7 +286,8 @@ impl Client {
                 let res = if p.payload.is_empty() {
                     self.broker.session.delete(&rke).await
                 } else {
-                    self.broker.session.put(&rke, p.payload.to_vec()).await
+                    let envelope = crate::retained::encode_envelope(&p.payload, SystemTime::now());
+                    self.broker.session.put(&rke, envelope).await
                 };
                 res.map_err(|e| anyhow!("retained write on {rke}: {e}"))?;
             }
@@ -338,7 +339,7 @@ impl Client {
 
     async fn deliver_retained(&self, filter: &str, qos: QoS, writer_tx: &Writer) -> Result<()> {
         let matches = self.broker.retained.matching_cached(filter).await;
-        for (topic_name, payload) in matches.iter() {
+        for (topic_name, payload, written_at) in matches.iter() {
             let mut p = Publish::new(topic_name, qos, payload.clone());
             p.retain = true;
             if qos != QoS::AtMostOnce {
@@ -346,8 +347,32 @@ impl Client {
             }
             send(writer_tx, Packet::Publish(p)).await?;
             Metrics::bump(&self.broker.metrics.messages_out_total);
+            self.flag_if_stale(topic_name, *written_at).await;
         }
         Ok(())
+    }
+
+    /// During a partition heal a retained value may be correct-but-old rather
+    /// than current; if this topic's age exceeds its staleness bound, tell
+    /// anyone listening on `$meta/<topic>` rather than let the plain retained
+    /// delivery imply freshness. Routed through the normal mesh-wide pub/sub
+    /// path (like `$SYS`), so it reaches every subscribed session, not just
+    /// this one connection, and only those that actually asked for it.
+    async fn flag_if_stale(&self, topic_name: &str, written_at: SystemTime) {
+        let bound = self.broker.staleness.bound_secs(topic_name);
+        if bound == 0 {
+            return;
+        }
+        let age = SystemTime::now().duration_since(written_at).unwrap_or_default();
+        if age < Duration::from_secs(bound) {
+            return;
+        }
+        let meta_ke = topic::meta_keyexpr(topic_name, &self.broker.cfg.scope);
+        let msg = format!("stale=true age_secs={} bound_secs={bound}", age.as_secs());
+        if let Err(e) = self.broker.session.put(&meta_ke, msg.into_bytes()).await {
+            warn!(topic = topic_name, "staleness meta publish failed: {e}");
+        }
+        Metrics::bump(&self.broker.metrics.stale_retained_total);
     }
 
     async fn fire_will(&mut self) {
@@ -365,7 +390,8 @@ impl Client {
                 }
                 if will.retain && !will.message.is_empty() {
                     let rke = topic::retained_keyexpr(&will.topic, &self.broker.cfg.scope);
-                    self.broker.session.put(&rke, will.message.to_vec()).await.ok();
+                    let envelope = crate::retained::encode_envelope(&will.message, SystemTime::now());
+                    self.broker.session.put(&rke, envelope).await.ok();
                 }
             }
             Err(e) => warn!(client = %self.id, "will topic invalid: {e}"),

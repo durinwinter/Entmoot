@@ -94,7 +94,9 @@ Phase 1c items in [PLAN.md](PLAN.md).
 Reconnect-storm protection: connect-admission control (`connect_admission_rate`)
 sheds excess CONNECTs with a legible `ServiceUnavailable` ahead of
 `max_connections`, and concurrent SUBSCRIBEs sharing a filter coalesce into
-one retained-store scan instead of one per client. See
+one retained-store scan instead of one per client. Partition staleness:
+retained deliveries past `retained_staleness_secs` get a `$meta/<topic>`
+companion flag instead of being presented as current. See
 [RESILIENCE_ROADMAP.md](RESILIENCE_ROADMAP.md) for the full six-workstream
-plan (this is workstream 1; partition staleness, chaos injection,
-benchmarking, transport hygiene, and visualizer honesty are still open).
+plan (workstreams 1-2 done; chaos injection, benchmarking, transport
+hygiene, and visualizer honesty are still open).

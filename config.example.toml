@@ -18,6 +18,12 @@ slow_consumer_grace_ms = 5000     # evict a client whose outbound queue stays fu
 sys_interval_secs = 10            # publish $SYS/broker/<id>/... node stats; 0 = off
 connect_admission_rate = 0        # max new CONNECTs/s let through to auth/session work; 0 = off
 connect_admission_burst = 0       # burst allowance for connect_admission_rate; clamped to >= the rate
+retained_staleness_secs = 0       # default staleness bound for retained delivery; 0 = off ($meta/<topic> if exceeded)
+
+# Per-namespace staleness overrides; first match wins, else retained_staleness_secs applies.
+# [[staleness]]
+# filter = "plant/kiln1/#"
+# bound_secs = 5
 
 [tls]                             # remove this section for plain MQTT only
 listen = "0.0.0.0:8883"

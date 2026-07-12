@@ -41,6 +41,10 @@ struct Args {
     /// Burst allowance for --connect-admission-rate
     #[arg(long)]
     connect_admission_burst: Option<u32>,
+    /// Default staleness bound (seconds) for retained-message delivery; 0 = disabled.
+    /// Per-namespace overrides are config-file only (see config.example.toml).
+    #[arg(long)]
+    retained_staleness_secs: Option<u64>,
 }
 
 #[tokio::main]
@@ -89,6 +93,9 @@ async fn main() -> Result<()> {
     }
     if let Some(burst) = args.connect_admission_burst {
         cfg.connect_admission_burst = burst;
+    }
+    if let Some(secs) = args.retained_staleness_secs {
+        cfg.retained_staleness_secs = secs;
     }
 
     if cfg.auth.allow_anonymous && cfg.auth.users.is_empty() {

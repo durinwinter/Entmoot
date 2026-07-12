@@ -7,15 +7,15 @@ PLC gateways reconnect at once. Six workstreams, sequenced so the ones that
 change the architecture land before the ones that just measure it:
 
 ```
-1. reconnect storm / rehydration herd   ← in progress
-2. partition merge semantics / staleness
+1. reconnect storm / rehydration herd   ← done
+2. partition merge semantics / staleness ← done
 3. cluster-level fault injection
 4. benchmarking methodology
 5. Nebula/transport hygiene
 6. visualizer honesty
 ```
 
-## 1. Reconnect storm / rehydration herd — in progress
+## 1. Reconnect storm / rehydration herd — done
 
 **Problem:** after a partition heals (or a node restarts), every client that
 was attached to it reconnects at once. Each reconnect re-authenticates,
@@ -66,17 +66,52 @@ client/edge concern (the `backoff` crate covers the policy) — out of scope
 for the node itself, which only owns the "reject legibly when saturated"
 half.
 
-## 2. Partition merge semantics / staleness — not started
+## 2. Partition merge semantics / staleness — done
 
-Zenoh already timestamps every sample with a uHLC and resolves retained
-writes last-writer-wins on that clock — the merge primitive exists. Planned:
-attach the HLC timestamp to delivered retained messages (MQTT user property
-once MQTT5 lands, or a parallel `meta/<topic>` topic in the meantime), define
-a per-namespace staleness bound, and mark values older than that bound as
-stale rather than presenting them as current. Write the heal-window behavior
-down as an explicit invariant ("during heal, the overlay may serve values up
-to partition-duration old, flagged") and test it before validating on a real
-cluster.
+Zenoh already resolves retained writes last-writer-wins on its own uHLC —
+the merge primitive exists. The gap was legibility: a node that survived a
+partition can hand a client a retained value that's correct-but-old without
+saying so.
+
+**Why not Zenoh's own sample timestamp:** the plan's first idea was to ride
+Zenoh's per-sample uHLC timestamp end to end. That breaks down at exactly
+the point that matters most — a late-joining node's catch-up `get()` against
+the retained queryable. The public zenoh-1.9 API has no way to set a custom
+`Timestamp` on `put()` or a queryable `reply()`; a reply always gets a fresh
+timestamp at reply time, and `Sample`'s fields are crate-private with no
+public constructor, so a `Sample` read from a live subscription can't be
+stored and later re-served with its original timestamp intact either. Riding
+the ambient Zenoh timestamp would silently make every value look "just
+replied" fresh to a late-joiner, the opposite of the goal.
+
+**What shipped instead:** the internal `[scope/]@retained/<topic>` payload
+(already Entmoot-owned wire format, see `crates/entmoot-node/src/retained.rs`)
+now carries its own 8-byte origin-write timestamp as a prefix
+(`encode_envelope`/`decode_envelope`), captured with `SystemTime::now()` by
+the node whose client actually published the retain. It travels unmodified
+through live replication, queryable catch-up, and disk snapshot alike,
+because Entmoot controls the encoding at every hop — unlike Zenoh's ambient
+timestamp, which the reply path silently replaces. Documented tradeoff: this
+is wall-clock, not a true HLC comparison, so it doesn't correct for clock
+skew between nodes; it needs no new wire dependency and actually survives
+the reply path, which the "correct" HLC answer didn't in this API version.
+
+- `retained_staleness_secs` (node-wide default) and a `[[staleness]]`
+  filter-matched override list (first match wins) define how old is too old,
+  per namespace, exactly as sketched.
+- A retained delivery past its bound gets a `$meta/<topic>` companion
+  message — a new reserved topic space (`$meta`, mirroring `$SYS`: subscribe-
+  only, unforgeable, invisible to bare `#`/`+` per MQTT-4.7.2-1) — routed
+  through the same mesh-wide pub/sub path everything else uses, so it
+  reaches every session subscribed to `$meta/#`, not just the one connection
+  that triggered the check. Payload: `stale=true age_secs=<n> bound_secs=<m>`.
+- Explicit invariant, now enforced in code rather than just documented: a
+  retained value is only ever handed to a client silently as current when
+  it's within its staleness bound; past it, the delivery still happens
+  (MQTT-3.3.1-8 is unconditional) but is always paired with the flag.
+- Tests in `crates/entmoot-node/tests/staleness.rs`: fresh delivery gets no
+  flag, a delivery past the bound does, and a per-namespace override takes
+  precedence over the node-wide default.
 
 ## 3. Cluster-level fault injection — not started
 

@@ -54,6 +54,14 @@ pub struct NodeConfig {
     /// Burst allowance for `connect_admission_rate`; clamped up to at least
     /// the rate itself. Ignored when the rate is 0.
     pub connect_admission_burst: u32,
+    /// Default staleness bound (seconds) for retained-message delivery:
+    /// during partition heal, a retained value older than this is flagged via
+    /// a `$meta/<topic>` companion message instead of being silently
+    /// presented as current. 0 = disabled (default).
+    pub retained_staleness_secs: u64,
+    /// Per-topic-filter overrides for `retained_staleness_secs`; the first
+    /// matching rule (in list order) wins, else the default above applies.
+    pub staleness: Vec<StalenessRule>,
     /// MQTT-over-TLS listener; absent = plain MQTT only.
     pub tls: Option<TlsConfig>,
     pub auth: AuthConfig,
@@ -81,6 +89,8 @@ impl Default for NodeConfig {
             sys_interval_secs: 10,
             connect_admission_rate: 0,
             connect_admission_burst: 0,
+            retained_staleness_secs: 0,
+            staleness: Vec::new(),
             tls: None,
             auth: AuthConfig::default(),
             acl: Vec::new(),
@@ -159,4 +169,14 @@ impl Default for AclRule {
     fn default() -> Self {
         Self { user: "*".into(), publish: Vec::new(), subscribe: Vec::new() }
     }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StalenessRule {
+    /// MQTT topic filter (may use `+`/`#`) this bound applies to.
+    pub filter: String,
+    /// Seconds after which a retained value on a matching topic is flagged
+    /// stale on delivery.
+    pub bound_secs: u64,
 }

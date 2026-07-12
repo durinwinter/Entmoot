@@ -75,10 +75,10 @@ pub fn topic_to_keyexpr(topic: &str, scope: &str) -> Result<String, TopicError> 
 
 /// Map an MQTT subscription filter (may contain `+` / `#`) to a Zenoh key expression.
 ///
-/// A filter whose first level is exactly `$SYS` maps onto the internal
-/// [`SYS_CHUNK`] keyspace. Because that chunk is zenoh-verbatim, `#` and `+`
-/// filters can never match it — which is exactly what MQTT-4.7.2-1 requires
-/// of topics beginning with `$`.
+/// A filter whose first level is exactly `$SYS` or `$meta` maps onto the
+/// matching internal verbatim keyspace. Because those chunks are
+/// zenoh-verbatim, `#` and `+` filters can never match them — which is
+/// exactly what MQTT-4.7.2-1 requires of topics beginning with `$`.
 pub fn filter_to_keyexpr(filter: &str, scope: &str) -> Result<String, TopicError> {
     let parts = levels(filter)?;
     let last = parts.len() - 1;
@@ -86,6 +86,7 @@ pub fn filter_to_keyexpr(filter: &str, scope: &str) -> Result<String, TopicError
     for (i, level) in parts.iter().enumerate() {
         match *level {
             SYS_PREFIX if i == 0 => out.push(SYS_CHUNK),
+            META_PREFIX if i == 0 => out.push(META_CHUNK),
             "+" => out.push("*"),
             "#" => {
                 if i != last {
@@ -122,6 +123,10 @@ pub fn keyexpr_to_topic<'a>(ke: &'a str, scope: &str) -> Option<Cow<'a, str>> {
     if let Some(sys) = rest.strip_prefix(SYS_CHUNK) {
         let sys = sys.strip_prefix('/')?;
         return Some(Cow::Owned(format!("{SYS_PREFIX}/{sys}")));
+    }
+    if let Some(meta) = rest.strip_prefix(META_CHUNK) {
+        let meta = meta.strip_prefix('/')?;
+        return Some(Cow::Owned(format!("{META_PREFIX}/{meta}")));
     }
     if rest.starts_with('@') {
         return None;
@@ -211,6 +216,18 @@ pub const SYS_CHUNK: &str = "@sys";
 /// Keyexpr on which the node publishes the `$SYS/<suffix>` topic.
 pub fn sys_keyexpr(suffix: &str, scope: &str) -> String {
     scoped(scope, format!("{SYS_CHUNK}/{suffix}"))
+}
+
+/// The `$meta` topic space: broker-authored annotations about the data
+/// itself (currently: retained-value staleness during a partition heal).
+/// Subscribe-only for clients, same unforgeable-verbatim-chunk trick as
+/// `$SYS`.
+pub const META_PREFIX: &str = "$meta";
+pub const META_CHUNK: &str = "@meta";
+
+/// Keyexpr on which the node publishes a `$meta/<topic>` annotation.
+pub fn meta_keyexpr(topic_name: &str, scope: &str) -> String {
+    scoped(scope, format!("{META_CHUNK}/{topic_name}"))
 }
 
 #[cfg(test)]
@@ -310,5 +327,19 @@ mod tests {
         );
         assert_eq!(sys_keyexpr("broker/n1/uptime", "s"), "s/@sys/broker/n1/uptime");
         assert_eq!(keyexpr_to_topic("s/@sys", "s"), None);
+    }
+
+    #[test]
+    fn meta_keyspace() {
+        assert_eq!(filter_to_keyexpr("$meta/#", "").unwrap(), "@meta/**");
+        assert_eq!(filter_to_keyexpr("$meta/plant/+/temp", "s").unwrap(), "s/@meta/plant/*/temp");
+        assert_eq!(topic_to_keyexpr("$meta/plant/x", ""), Err(TopicError::ReservedChar('$')));
+        assert_eq!(filter_to_keyexpr("a/$meta/#", ""), Err(TopicError::ReservedChar('$')));
+        assert_eq!(
+            keyexpr_to_topic("s/@meta/plant/kiln1/temp", "s").as_deref(),
+            Some("$meta/plant/kiln1/temp")
+        );
+        assert_eq!(meta_keyexpr("plant/kiln1/temp", "s"), "s/@meta/plant/kiln1/temp");
+        assert_eq!(keyexpr_to_topic("s/@meta", "s"), None);
     }
 }

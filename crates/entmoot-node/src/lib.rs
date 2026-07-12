@@ -40,6 +40,7 @@ pub struct Broker {
     pub registry: SessionRegistry,
     pub metrics: Metrics,
     pub connect_admission: ConnectAdmission,
+    pub staleness: entmoot_core::staleness::StalenessPolicy,
     conn_count: AtomicUsize,
 }
 
@@ -229,6 +230,10 @@ pub async fn run(cfg: NodeConfig) -> Result<BrokerHandle> {
         ),
         metrics: Metrics::default(),
         connect_admission: ConnectAdmission::new(cfg.connect_admission_rate, cfg.connect_admission_burst),
+        staleness: entmoot_core::staleness::StalenessPolicy::new(
+            cfg.staleness.clone(),
+            cfg.retained_staleness_secs,
+        ),
         session,
         cfg,
         conn_count: AtomicUsize::new(0),

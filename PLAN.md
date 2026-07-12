@@ -150,6 +150,19 @@ defenses, detailed in [RESILIENCE_ROADMAP.md](RESILIENCE_ROADMAP.md):
   independently. `entmoot_retained_scans_total` vs. `entmoot_subscribes_total`
   in `/metrics` is the fan-out ratio this collapses.
 
+### Partition staleness
+
+A value that survived a partition is correct-but-old, not current. Every
+retained entry now carries its origin write time; `retained_staleness_secs`
+(plus per-filter `[[staleness]]` overrides) defines how old is too old, and a
+delivery past that bound gets a `$meta/<topic>` companion message
+(`stale=true age_secs=<n> bound_secs=<m>`) alongside the normal retained
+PUBLISH, delivered to anyone subscribed to `$meta/#` — a new reserved topic
+space mirroring `$SYS` (unforgeable, invisible to bare wildcards per
+MQTT-4.7.2-1). Off by default (`retained_staleness_secs = 0`). See
+[RESILIENCE_ROADMAP.md](RESILIENCE_ROADMAP.md) for why this rides in the
+payload rather than Zenoh's own sample timestamp.
+
 ### Why not OpenZiti for this?
 
 Considered and parked: OpenZiti is a zero-trust *connectivity* overlay (identity-based
