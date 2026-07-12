@@ -45,6 +45,15 @@ pub struct NodeConfig {
     /// Interval for publishing node stats on `$SYS/broker/<id>/...`
     /// (subscribe-only; clients cannot publish under `$SYS`). 0 = disabled.
     pub sys_interval_secs: u64,
+    /// Maximum rate (per second) at which new CONNECTs are admitted into
+    /// auth/session/retained-delivery, independent of `max_connections`.
+    /// Beyond this rate the CONNECT is refused with `ServiceUnavailable`
+    /// instead of being processed, so a reconnect storm gets a legible
+    /// backoff signal rather than silent overload. 0 = unlimited (default).
+    pub connect_admission_rate: u32,
+    /// Burst allowance for `connect_admission_rate`; clamped up to at least
+    /// the rate itself. Ignored when the rate is 0.
+    pub connect_admission_burst: u32,
     /// MQTT-over-TLS listener; absent = plain MQTT only.
     pub tls: Option<TlsConfig>,
     pub auth: AuthConfig,
@@ -70,6 +79,8 @@ impl Default for NodeConfig {
             max_queued_per_session: 1000,
             slow_consumer_grace_ms: 5000,
             sys_interval_secs: 10,
+            connect_admission_rate: 0,
+            connect_admission_burst: 0,
             tls: None,
             auth: AuthConfig::default(),
             acl: Vec::new(),

@@ -4,8 +4,10 @@ A distributed industrial MQTT databus: a mesh of small Rust nodes replaces a mon
 broker (HiveMQ/EMQX). Each node speaks standard MQTT 3.1.1 to clients and uses the
 Entmoot bus as the inter-node backbone — a publish on any node reaches subscribers on
 every node, with no consensus cluster and no shared database. See [PLAN.md](PLAN.md)
-for the architecture and phase roadmap, and [ENTERPRISE_ROADMAP.md](ENTERPRISE_ROADMAP.md)
-for the open-source enterprise feature track.
+for the architecture and phase roadmap, [ENTERPRISE_ROADMAP.md](ENTERPRISE_ROADMAP.md)
+for the open-source enterprise feature track, and
+[RESILIENCE_ROADMAP.md](RESILIENCE_ROADMAP.md) for reconnect-storm, partition,
+and chaos-testing work.
 
 ## Build note (this machine)
 
@@ -88,3 +90,11 @@ and all — at startup, before the client reconnects, with ACLs re-checked again
 current config), Prometheus `/metrics`, Kubernetes `/healthz` + `/readyz`, and
 `$SYS/broker/<id>/…` node stats. Not yet: TLS cert rotation, MQTT 5 — remaining
 Phase 1c items in [PLAN.md](PLAN.md).
+
+Reconnect-storm protection: connect-admission control (`connect_admission_rate`)
+sheds excess CONNECTs with a legible `ServiceUnavailable` ahead of
+`max_connections`, and concurrent SUBSCRIBEs sharing a filter coalesce into
+one retained-store scan instead of one per client. See
+[RESILIENCE_ROADMAP.md](RESILIENCE_ROADMAP.md) for the full six-workstream
+plan (this is workstream 1; partition staleness, chaos injection,
+benchmarking, transport hygiene, and visualizer honesty are still open).

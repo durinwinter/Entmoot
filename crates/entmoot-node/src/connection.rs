@@ -7,11 +7,14 @@
 //! full PUBREC/PUBREL/PUBCOMP handshake but relayed with at-least-once
 //! semantics across the mesh.
 //!
-//! Hardening enforced here: password or client-cert auth on CONNECT,
-//! per-identity topic ACLs (denied publishes are dropped and logged,
-//! mosquitto-style, to avoid reconnect storms from misconfigured devices;
-//! denied subscriptions get a SUBACK failure), and a per-connection publish
-//! rate limit whose violators are disconnected.
+//! Hardening enforced here: connect-admission control (CONNECTs beyond the
+//! configured rate are refused with `ServiceUnavailable` before any auth or
+//! session work, ahead of the reconnect-storm path in `admission.rs`),
+//! password or client-cert auth on CONNECT, per-identity topic ACLs (denied
+//! publishes are dropped and logged, mosquitto-style, to avoid reconnect
+//! storms from misconfigured devices; denied subscriptions get a SUBACK
+//! failure), and a per-connection publish rate limit whose violators are
+//! disconnected.
 
 use crate::metrics::Metrics;
 use crate::session::{activate_subscription, SessionState};
@@ -57,6 +60,14 @@ where
         Ok(Err(e)) => return Err(e).context("reading CONNECT"),
         Err(_) => bail!("client sent no CONNECT within {CONNECT_TIMEOUT:?}"),
     };
+
+    if !broker.connect_admission.admit() {
+        warn!(addr = %peer, "CONNECT shed: connect-admission rate exceeded");
+        Metrics::bump(&broker.metrics.connect_shed_total);
+        conn.write_packet(&Packet::ConnAck(ConnAck::new(ConnectReturnCode::ServiceUnavailable, false)))
+            .await?;
+        return Ok(());
+    }
 
     let identity = match cert_identity {
         Some(cn) => {
@@ -321,12 +332,14 @@ impl Client {
             warn!(client = %self.id, filter, "zenoh subscriber failed: {e}");
             return SubscribeReasonCode::Failure;
         }
+        Metrics::bump(&self.broker.metrics.subscribes_total);
         SubscribeReasonCode::Success(granted)
     }
 
     async fn deliver_retained(&self, filter: &str, qos: QoS, writer_tx: &Writer) -> Result<()> {
-        for (topic_name, payload) in self.broker.retained.matching(filter) {
-            let mut p = Publish::new(&topic_name, qos, payload);
+        let matches = self.broker.retained.matching_cached(filter).await;
+        for (topic_name, payload) in matches.iter() {
+            let mut p = Publish::new(topic_name, qos, payload.clone());
             p.retain = true;
             if qos != QoS::AtMostOnce {
                 p.pkid = self.session.next_pkid();

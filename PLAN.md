@@ -132,6 +132,24 @@ Remaining (Phase 1c):
 - TLS cert rotation / reload without restart.
 - MQTT 5 (via `mqttbytes::v5`): session expiry, shared subscriptions, reason codes.
 
+### Reconnect-storm protection
+
+Phase 1's persistent-session rehydration means a partition heal or node
+restart brings every affected client back at once, all resuming sessions and
+re-subscribing (with MQTT-3.3.1-8 retained delivery on every SUBACK). Two
+defenses, detailed in [RESILIENCE_ROADMAP.md](RESILIENCE_ROADMAP.md):
+
+- ✅ Connect-admission control: a GCRA rate limiter (`connect_admission_rate`
+  / `connect_admission_burst`) gates how fast new CONNECTs enter auth/session
+  work, refusing the excess with `ServiceUnavailable` — a legible signal
+  instead of a bare TCP refusal — ahead of the existing `max_connections`
+  cap. Off by default (rate 0).
+- ✅ Retained-match coalescing: concurrent SUBSCRIBEs sharing a filter (the
+  reconnect-storm shape) share one retained-store scan via a `moka` cache
+  with singleflight semantics, instead of each client re-scanning
+  independently. `entmoot_retained_scans_total` vs. `entmoot_subscribes_total`
+  in `/metrics` is the fan-out ratio this collapses.
+
 ### Why not OpenZiti for this?
 
 Considered and parked: OpenZiti is a zero-trust *connectivity* overlay (identity-based

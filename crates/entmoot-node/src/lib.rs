@@ -5,12 +5,14 @@
 //! through Zenoh, so there is exactly one routing path and loops are
 //! impossible by construction.
 
+mod admission;
 mod connection;
 mod health;
 mod metrics;
 mod retained;
 mod session;
 
+pub use admission::ConnectAdmission;
 pub use metrics::Metrics;
 pub use retained::RetainedStore;
 pub use session::SessionRegistry;
@@ -37,6 +39,7 @@ pub struct Broker {
     pub retained: Arc<RetainedStore>,
     pub registry: SessionRegistry,
     pub metrics: Metrics,
+    pub connect_admission: ConnectAdmission,
     conn_count: AtomicUsize,
 }
 
@@ -225,6 +228,7 @@ pub async fn run(cfg: NodeConfig) -> Result<BrokerHandle> {
             queue_dir,
         ),
         metrics: Metrics::default(),
+        connect_admission: ConnectAdmission::new(cfg.connect_admission_rate, cfg.connect_admission_burst),
         session,
         cfg,
         conn_count: AtomicUsize::new(0),

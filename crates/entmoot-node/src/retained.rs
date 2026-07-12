@@ -6,11 +6,19 @@
 //! serves it via a queryable so a node that joins the mesh late can catch up
 //! with one `get`. Client topics can never collide with the keyspace: levels
 //! starting with '@' are rejected at validation.
+//!
+//! `matching` is a linear scan against the whole replica per SUBSCRIBE. In a
+//! reconnect storm many clients share the same filter (`plant/#` is typical
+//! in an industrial namespace); [`MatchCache`] gives those concurrent
+//! SUBSCRIBEs singleflight semantics via moka, so one scan serves all of
+//! them instead of redoing the work (and the shared-lock traffic) once per
+//! client.
 
 use anyhow::{anyhow, Result};
 use bytes::Bytes;
 use entmoot_core::topic;
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::sync::RwLock;
 use std::time::Duration;
 use tokio::task::JoinHandle;
@@ -22,24 +30,49 @@ use zenoh::Session;
 /// peers (gives the explicit peer links time to establish).
 const FETCH_DELAY: Duration = Duration::from_millis(750);
 
-#[derive(Default)]
 pub struct RetainedStore {
     map: RwLock<HashMap<String, Bytes>>,
     dirty: std::sync::atomic::AtomicBool,
+    /// Coalesces concurrent `matching(filter)` calls for the same filter
+    /// (the reconnect-storm shape: many clients share a filter like
+    /// `plant/#`) into one scan. Invalidated wholesale on every mutation, so
+    /// it never serves a result older than the last insert/remove.
+    match_cache: moka::future::Cache<String, Arc<Vec<(String, Bytes)>>>,
+    /// Count of actual underlying scans performed (cache misses). Compared
+    /// against subscribe grants, this is the fan-out ratio the reconnect-storm
+    /// coalescing is meant to shrink.
+    scans: std::sync::atomic::AtomicU64,
+}
+
+impl Default for RetainedStore {
+    fn default() -> Self {
+        Self {
+            map: RwLock::default(),
+            dirty: std::sync::atomic::AtomicBool::default(),
+            match_cache: moka::future::Cache::new(MATCH_CACHE_CAPACITY),
+            scans: std::sync::atomic::AtomicU64::default(),
+        }
+    }
 }
 
 const SNAPSHOT_MAGIC: &[u8] = b"ENTMOOT-RET1\n";
 const PERSIST_INTERVAL: Duration = Duration::from_secs(2);
+/// Distinct subscription filters a node is expected to see concurrently
+/// during a storm; a generous ceiling, not a hard limit (moka evicts LRU
+/// beyond it, which only costs a re-scan, never correctness).
+const MATCH_CACHE_CAPACITY: u64 = 10_000;
 
 impl RetainedStore {
     pub fn insert(&self, topic_name: String, payload: Bytes) {
         self.map.write().unwrap().insert(topic_name, payload);
         self.dirty.store(true, std::sync::atomic::Ordering::Relaxed);
+        self.match_cache.invalidate_all();
     }
 
     pub fn remove(&self, topic_name: &str) {
         self.map.write().unwrap().remove(topic_name);
         self.dirty.store(true, std::sync::atomic::Ordering::Relaxed);
+        self.match_cache.invalidate_all();
     }
 
     pub fn len(&self) -> usize {
@@ -102,6 +135,7 @@ impl RetainedStore {
 
     /// Retained messages matching an MQTT subscription filter.
     pub fn matching(&self, filter: &str) -> Vec<(String, Bytes)> {
+        self.scans.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.map
             .read()
             .unwrap()
@@ -109,6 +143,23 @@ impl RetainedStore {
             .filter(|(t, _)| topic::topic_matches(filter, t))
             .map(|(t, p)| (t.clone(), p.clone()))
             .collect()
+    }
+
+    /// Number of underlying scans performed since startup (i.e. cache misses
+    /// on `matching_cached`, plus any direct `matching` calls).
+    pub fn scan_count(&self) -> u64 {
+        self.scans.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Same result as [`matching`](Self::matching), but concurrent calls for
+    /// the same filter share one scan (moka `get_with` blocks concurrent
+    /// misses on a key behind a single loader) — the coalescing that matters
+    /// when a reconnect storm sends a wave of SUBSCRIBEs for the same filter
+    /// at once.
+    pub async fn matching_cached(&self, filter: &str) -> Arc<Vec<(String, Bytes)>> {
+        self.match_cache
+            .get_with_by_ref(filter, async { Arc::new(self.matching(filter)) })
+            .await
     }
 
     pub fn snapshot(&self) -> Vec<(String, Bytes)> {

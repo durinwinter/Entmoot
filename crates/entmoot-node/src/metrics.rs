@@ -17,11 +17,13 @@ use tracing::warn;
 pub struct Metrics {
     pub connections_total: AtomicU64,
     pub connect_refused_total: AtomicU64,
+    pub connect_shed_total: AtomicU64,
     pub messages_in_total: AtomicU64,
     pub messages_out_total: AtomicU64,
     pub messages_queued_total: AtomicU64,
     pub publish_denied_total: AtomicU64,
     pub subscribe_denied_total: AtomicU64,
+    pub subscribes_total: AtomicU64,
     pub rate_limit_disconnects_total: AtomicU64,
     pub slow_consumer_evictions_total: AtomicU64,
 }
@@ -45,11 +47,14 @@ pub fn render(broker: &Broker) -> String {
     metric("connections_current", "gauge", "Open MQTT connections", broker.connections() as u64);
     metric("connections_total", "counter", "MQTT connections accepted since start", c(&m.connections_total));
     metric("connect_refused_total", "counter", "CONNECTs refused (auth)", c(&m.connect_refused_total));
+    metric("connect_shed_total", "counter", "CONNECTs shed by admission control (reconnect-storm protection)", c(&m.connect_shed_total));
     metric("messages_in_total", "counter", "PUBLISH packets accepted from clients", c(&m.messages_in_total));
     metric("messages_out_total", "counter", "PUBLISH packets delivered to clients", c(&m.messages_out_total));
     metric("messages_queued_total", "counter", "Messages queued for offline sessions", c(&m.messages_queued_total));
     metric("publish_denied_total", "counter", "Publishes dropped by ACL", c(&m.publish_denied_total));
     metric("subscribe_denied_total", "counter", "Subscriptions refused by ACL or validation", c(&m.subscribe_denied_total));
+    metric("subscribes_total", "counter", "Subscriptions granted", c(&m.subscribes_total));
+    metric("retained_scans_total", "counter", "Retained-store scans performed (denominator for the reconnect-storm coalescing ratio: scans / subscribes_total)", broker.retained.scan_count());
     metric("rate_limit_disconnects_total", "counter", "Clients disconnected for exceeding the publish rate", c(&m.rate_limit_disconnects_total));
     metric("slow_consumer_evictions_total", "counter", "Clients evicted because their outbound queue stayed full", c(&m.slow_consumer_evictions_total));
     metric("retained_messages", "gauge", "Retained messages replicated on this node", broker.retained.len() as u64);

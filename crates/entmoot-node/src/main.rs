@@ -34,6 +34,13 @@ struct Args {
     /// Maximum accepted MQTT packet size in bytes
     #[arg(long)]
     max_packet_size: Option<usize>,
+    /// Maximum rate (per second) of newly admitted CONNECTs; beyond this,
+    /// CONNECT is refused with ServiceUnavailable instead of processed. 0 = unlimited
+    #[arg(long)]
+    connect_admission_rate: Option<u32>,
+    /// Burst allowance for --connect-admission-rate
+    #[arg(long)]
+    connect_admission_burst: Option<u32>,
 }
 
 #[tokio::main]
@@ -76,6 +83,12 @@ async fn main() -> Result<()> {
     }
     if let Some(mps) = args.max_packet_size {
         cfg.max_packet_size = mps;
+    }
+    if let Some(rate) = args.connect_admission_rate {
+        cfg.connect_admission_rate = rate;
+    }
+    if let Some(burst) = args.connect_admission_burst {
+        cfg.connect_admission_burst = burst;
     }
 
     if cfg.auth.allow_anonymous && cfg.auth.users.is_empty() {
