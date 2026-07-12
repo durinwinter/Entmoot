@@ -29,3 +29,4 @@ governor = { workspace = true }
 [dev-dependencies]
 rumqttc = { workspace = true, features = ["use-rustls"] }
 rcgen = { workspace = true }
+hdrhistogram = { workspace = true }

@@ -99,6 +99,9 @@ retained deliveries past `retained_staleness_secs` get a `$meta/<topic>`
 companion flag instead of being presented as current. Fault injection for
 both: [chaos/](chaos/) has a Toxiproxy-fronted mesh + partition/heal/storm
 script runnable today, and Chaos Mesh manifests for once Phase 2 packaging
-ships. See [RESILIENCE_ROADMAP.md](RESILIENCE_ROADMAP.md) for the full
-six-workstream plan (workstreams 1-3 done; benchmarking, transport hygiene,
-and visualizer honesty are still open).
+ships. `cargo run -p entmoot-node --example storm_bench` measures recovery
+(live-traffic latency during a storm, time-to-rehydration, retained-scan
+fan-out ratio) against any running node. See
+[RESILIENCE_ROADMAP.md](RESILIENCE_ROADMAP.md) for the full six-workstream
+plan (workstreams 1-4 done; transport hygiene and visualizer honesty are
+still open).

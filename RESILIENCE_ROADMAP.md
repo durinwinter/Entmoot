@@ -10,7 +10,7 @@ change the architecture land before the ones that just measure it:
 1. reconnect storm / rehydration herd    ← done
 2. partition merge semantics / staleness ← done
 3. cluster-level fault injection         ← done
-4. benchmarking methodology
+4. benchmarking methodology              ← done
 5. Nebula/transport hygiene
 6. visualizer honesty
 ```
@@ -133,14 +133,58 @@ Two layers, in `chaos/` (see `chaos/README.md` for the full writeup):
   looking and documented as such; selectors will need adjusting to whatever
   the real deployment's labels turn out to be.
 
-## 4. Benchmarking methodology — not started
+## 4. Benchmarking methodology — done
 
-Measure recovery, not throughput: time-to-full-rehydration, storage/queryable
-fan-out ratio (now: the coalescing hit rate from workstream 1), and p99.9
-live-traffic latency *during* a storm, using `hdrhistogram` with coordinated-
-omission correction (a load generator that waits for each response hides
-exactly the stalls a storm causes). Matrix: {partition 10s/60s/10min} ×
-{1k/10k clients} × {single-site/two-site over Nebula}.
+`cargo run -p entmoot-node --example storm_bench` (see the doc comment at
+the top of `crates/entmoot-node/examples/storm_bench.rs` for full usage)
+measures recovery, not throughput, against any running node — local or a
+real cluster:
+
+- **Live-traffic latency during the storm**, via `hdrhistogram` with
+  coordinated-omission correction (`record_correct`): steady-state
+  publisher/subscriber pairs fire on a fixed schedule regardless of whether
+  the previous round trip has completed, so a storm-induced stall shows up
+  as the stall it is — backfilled across the gap — rather than a single
+  outlier sample that percentiles quietly absorb.
+- **Time-to-full-rehydration**: storm clients prime a persistent session,
+  get torn down, then reconnect simultaneously (optionally around a real
+  Toxiproxy partition/heal via `--toxiproxy-addr`/`--toxiproxy-proxy`,
+  shelled out to `toxiproxy-cli toggle` rather than reimplementing its wire
+  protocol), timed from reconnect to SUBACK/first message.
+- **Fan-out ratio**: reads the target's `/metrics` for
+  `entmoot_retained_scans_total` vs. `entmoot_subscribes_total` — the exact
+  workstream-1 coalescing metric — plus `connect_shed_total` and
+  `stale_retained_total`.
+
+`emqtt-bench`/`criterion` from the original plan weren't used: emqtt-bench
+measures throughput, not the recovery-shaped signals above, and criterion is
+for micro-benchmarks, not a live multi-node storm — a purpose-built rumqttc
+harness matches what's actually being measured, and reuses the same client
+library already proven out in `tests/resilience.rs`.
+
+**A real finding from running it, not a hypothetical:** the first version of
+this harness had a bug — on a refused/dropped poll, `rumqttc`'s eventloop
+retries immediately with no backoff, and the harness didn't handle that
+case, so both the live client and the priming phase spun into a busy
+reconnect loop that added tens of thousands of its own CONNECTs to the very
+storm it was measuring (`connect_shed_total` read 84,629 for a 40-client
+run before the fix, 75 after). Fixed by backing off on the live client and
+giving up immediately on a shed priming attempt rather than hot-looping.
+Running the harness against connect-admission control also surfaced a real
+gap in workstream 1's design: admission control currently sheds *any*
+CONNECT past its rate, live-traffic reconnects included — it has no way to
+tell a rehydrating persistent session from an ordinary reconnect, so the
+plan's stated policy ("shed rehydration before live traffic — rehydration
+is retryable, live telemetry isn't") isn't fully realized. `clean_session`
+isn't a reliable proxy (ordinary live producers use persistent sessions
+too), so this needs a real signal — a client-supplied hint or a
+priority scheme — before it can be fixed properly; tracked here rather than
+patched with a heuristic that isn't actually justified.
+
+Matrix (run manually today; a driver script that shells out to
+`storm_bench` across the whole matrix is a natural follow-up, not yet
+built): {partition 10s/60s/10min} × {1k/10k clients} × {single-site/two-site
+over Nebula}.
 
 ## 5. Nebula/transport hygiene — not started
 
