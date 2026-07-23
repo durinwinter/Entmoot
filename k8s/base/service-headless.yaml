@@ -1,0 +1,30 @@
+# The StatefulSet's governing Service (spec.serviceName): gives each pod a
+# stable DNS name (entmoot-0.entmoot-headless, entmoot-1.entmoot-headless,
+# ...) with no load-balancing — exactly what peer discovery needs (PLAN.md
+# Phase 2: "peers discover each other via stable DNS ... no discovery
+# service needed"). publishNotReadyAddresses is set because the
+# --peer-zero bootstrap (k8s/README.md) needs pod 1..N to resolve pod 0's
+# name even before pod 0 has passed its own readiness probe — without this,
+# a cold start of the whole StatefulSet at once can stall on a chicken-and-
+# egg DNS gap.
+apiVersion: v1
+kind: Service
+metadata:
+  name: entmoot-headless
+  labels:
+    app: entmoot
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    app: entmoot
+  ports:
+    - name: bus
+      port: 7447
+      targetPort: 7447
+    - name: mqtt
+      port: 1883
+      targetPort: 1883
+    - name: mqtts
+      port: 8883
+      targetPort: 8883

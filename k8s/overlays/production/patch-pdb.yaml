@@ -1,0 +1,7 @@
+# With 5 replicas, guarantee more headroom than the base default of 1.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: entmoot
+spec:
+  minAvailable: 3

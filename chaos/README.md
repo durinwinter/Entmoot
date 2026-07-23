@@ -29,17 +29,25 @@ The scenario script uses `mosquitto_sub` as a zero-setup storm client. For
 rigorous measurement (HdrHistogram, coordinated-omission correction) use the
 workstream-4 benchmark harness once it lands instead.
 
-## Chaos Mesh — cluster-level, assumes Phase 2 packaging
+## Chaos Mesh — cluster-level, targets the Phase 2 packaging
 
 `k8s/*.yaml` are [Chaos Mesh](https://chaos-mesh.org) `NetworkChaos` /
 `Schedule` manifests: a 1-vs-2 site partition, packet loss, and latency/
-jitter injection against an Entmoot StatefulSet. These assume the Phase 2
-Kubernetes packaging described in [PLAN.md](../PLAN.md) (a StatefulSet named
-`entmoot`, labelled `app=entmoot`) which hasn't shipped yet — adjust
-selectors/namespace to your actual deployment. They're declared as YAML and
-schedulable, fitting a Kubernetes-native-from-day-one posture, and they're
-meant to replay the same partition/loss/latency shapes as the Toxiproxy
-scripts above, against the real stack instead of a two-process stand-in.
+jitter injection against an Entmoot StatefulSet. The Phase 2 Kubernetes
+packaging they assume (see [PLAN.md](../PLAN.md) and
+[`../k8s/README.md`](../k8s/README.md)) has now shipped — a StatefulSet
+named `entmoot` labelled `app=entmoot`, by default in the `entmoot`
+namespace, though the `dev`/`staging`/`production` overlays put it in
+`entmoot-dev`/`entmoot-staging`/`entmoot-production` instead. Adjust these
+manifests' `namespace` and pod names (`entmoot-0`/`entmoot-1`/`entmoot-2`)
+to match whichever overlay and replica count you actually applied before
+using them. They're declared as YAML and schedulable, fitting a
+Kubernetes-native-from-day-one posture, and they're meant to replay the
+same partition/loss/latency shapes as the Toxiproxy scripts above, against
+the real stack instead of a two-process stand-in. As with the rest of the
+Phase 2 packaging, these have been written and reasoned about carefully but
+not exercised against a real Chaos Mesh install — this development
+environment has no cluster to run one on.
 
 | File | What it does |
 |---|---|
@@ -49,4 +57,6 @@ scripts above, against the real stack instead of a two-process stand-in.
 | `schedule-partition-matrix.yaml` | Recurring partition experiment for unattended soak testing |
 
 Apply with `kubectl apply -f chaos/k8s/networkchaos-site-partition.yaml`
-once Chaos Mesh is installed and Phase 2 packaging is deployed.
+once Chaos Mesh is installed and the `staging` overlay (or your own) is
+deployed — see `k8s/README.md` step 7 for the full walkthrough including
+the Chaos Mesh install itself.

@@ -1,0 +1,42 @@
+# PLAN.md Phase 2: "only 1883/8883 in, 7447 peer-to-peer". policyTypes is
+# Ingress only — egress is left unrestricted (every pod needs to reach
+# every other pod's bus port, plus DNS; scoping egress too is possible but
+# adds real risk of breaking the mesh for little benefit here).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: entmoot
+  labels:
+    app: entmoot
+spec:
+  podSelector:
+    matchLabels:
+      app: entmoot
+  policyTypes:
+    - Ingress
+  ingress:
+    # MQTT / MQTT-over-TLS: client-facing. Open by default; tighten `from`
+    # to your actual client network or ingress controller in production.
+    - ports:
+        - protocol: TCP
+          port: 1883
+        - protocol: TCP
+          port: 8883
+    # Entmoot bus: peer-to-peer only, never exposed to clients.
+    - from:
+        - podSelector:
+            matchLabels:
+              app: entmoot
+      ports:
+        - protocol: TCP
+          port: 7447
+    # Metrics/health: cluster-internal by default (any namespace, never
+    # external). Narrow the namespaceSelector to your monitoring stack's
+    # actual namespace/labels once you have one.
+    - from:
+        - namespaceSelector: {}
+      ports:
+        - protocol: TCP
+          port: 9464
+        - protocol: TCP
+          port: 9465

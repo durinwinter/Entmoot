@@ -1,0 +1,40 @@
+# 5 replicas, hard pod anti-affinity (one Entmoot pod per Kubernetes node —
+# a small kind cluster likely can't satisfy this, which is exactly why it's
+# production-only, not in base), and production-sized resources/storage.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: entmoot
+spec:
+  replicas: 5
+  template:
+    spec:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app: entmoot
+              topologyKey: kubernetes.io/hostname
+      containers:
+        - name: entmoot
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+  # kustomize replaces this whole list on patch rather than merging by name
+  # (unlike containers, volumeClaimTemplates entries have no recognized
+  # merge key in the schema it uses) — verified by rendering this overlay
+  # and inspecting the output, so the full spec is repeated here rather
+  # than just the field being changed.
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 20Gi

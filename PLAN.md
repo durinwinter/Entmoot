@@ -212,15 +212,27 @@ links, at the cost of operating a ziti controller + edge routers. Native TLS/mTL
 our own code path covers the core need with less operational surface, so that ships
 first.
 
-## Phase 2 — Kubernetes packaging
+## Phase 2 — Kubernetes packaging (shipped: `Dockerfile`, `k8s/`)
 
-- Static musl build → distroless image (~15 MB).
+- Static musl build → distroless image (stripped release binary measures
+  ~24 MB; distroless/static-debian12 adds only a couple MB on top).
 - StatefulSet + headless Service: peers discover each other via stable DNS
-  (`entmoot-0.entmoot-hl`, …) — no discovery service needed.
-- LoadBalancer/NodePort for 1883/8883 client ingress; readiness gate = Zenoh session up.
+  (`entmoot-0.entmoot-headless`, …) via a `--peer-zero` seed link every pod
+  shares — no discovery service needed, no shell/entrypoint script (the
+  image has none).
+- Client-facing Service for 1883/8883 (`ClusterIP` in dev/staging,
+  `LoadBalancer` in the production overlay); readiness gate = Zenoh session
+  up (`/readyz`).
 - PodDisruptionBudget, NetworkPolicy (only 1883/8883 in, 7447 peer-to-peer).
-- Local dev loop with kind + Tilt, manifests shared with prod via Kustomize overlays
-  (deferred per earlier discussion until Docker is available on a dev box).
+- dev/staging/production Kustomize overlays, differing by namespace/replica
+  count/resources only (no `namePrefix` — see `k8s/README.md` for why).
+- **Not yet verified against a live cluster**: this development environment
+  has no Docker daemon and no `kubectl`/`kind`. The musl build was
+  cross-compiled and confirmed genuinely static here; the manifests were
+  rendered with `kustomize build` and their content inspected field by
+  field; but the image has never actually been built or run, and nothing
+  has been `kubectl apply`'d. `k8s/README.md` has the full kind-based
+  quickstart to close that gap on a machine with Docker.
 
 ## Phase 3 — Industrial differentiators
 

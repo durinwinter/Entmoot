@@ -132,12 +132,15 @@ Two layers, in `chaos/` (see `chaos/README.md` for the full writeup):
   This is also the tool of record for Nebula-specific underlay paths once
   they exist, per the original plan, since Chaos Mesh only sees inside the
   cluster network.
-- **Chaos Mesh, assumes Phase 2 packaging:** `chaos/k8s/*.yaml` —
+- **Chaos Mesh, targets the Phase 2 packaging:** `chaos/k8s/*.yaml` —
   `NetworkChaos` site-partition, packet-loss, and latency/jitter manifests
-  plus a recurring `Schedule` — against the StatefulSet Phase 2 packaging
-  will produce (PLAN.md). Phase 2 hasn't shipped, so these are forward-
-  looking and documented as such; selectors will need adjusting to whatever
-  the real deployment's labels turn out to be.
+  plus a recurring `Schedule` — against the StatefulSet the Phase 2
+  packaging now produces (`k8s/`, `k8s/README.md`). Phase 2 has shipped
+  (distroless image, StatefulSet + headless Service peer bootstrap, PDB/
+  NetworkPolicy, Kustomize overlays) but is unverified against a live
+  cluster — no Docker daemon or `kubectl`/`kind` in this environment;
+  selectors/namespace here still need adjusting to whichever overlay's
+  labels/namespace you actually deployed (see `chaos/README.md`).
 
 ## 4. Benchmarking methodology — done
 

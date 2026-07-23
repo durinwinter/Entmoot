@@ -1,0 +1,32 @@
+# 3 replicas (same as base) with more realistic resources and storage than
+# the dev overlay — staging is where reconnect-storm/chaos scenarios from
+# RESILIENCE_ROADMAP.md and chaos/k8s/ should actually be run.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: entmoot
+spec:
+  template:
+    spec:
+      containers:
+        - name: entmoot
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+  # kustomize replaces this whole list on patch rather than merging by name
+  # (unlike containers, volumeClaimTemplates entries have no recognized
+  # merge key in the schema it uses) — verified by rendering this overlay
+  # and inspecting the output, so the full spec is repeated here rather
+  # than just the field being changed.
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 5Gi

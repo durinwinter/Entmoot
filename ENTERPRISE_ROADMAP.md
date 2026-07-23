@@ -284,21 +284,28 @@ than a generic "cluster federation" feature the architecture doesn't need.
 
 ### Kubernetes Operator / Helm / packaging
 
-This is the single biggest, most concrete gap, and arguably matters more
-than anything exotic above it: **Phase 2 packaging in PLAN.md is entirely
-unimplemented** — no StatefulSet, no Helm/Kustomize, no distroless image,
-no PodDisruptionBudget or NetworkPolicy. There's no standard way to
-actually run Entmoot in production Kubernetes today, which undercuts every
-other enterprise-parity claim (the workstream-3 Chaos Mesh manifests added
-this session are explicitly written as forward-looking for exactly this
-reason). Unlike everything else in this section, this is pure execution,
-not new distributed-systems design — PLAN.md already scoped it. A
-full HiveMQ-style *Operator* (vs. plain manifests/Helm) is a legitimate but
-separate stretch goal: a StatefulSet's native rolling-restart behavior
-already gets correct one-at-a-time restarts with readiness gates for free;
-an operator earns its keep for things Kubernetes doesn't do natively —
-hot-applying config to running pods without restart, coordinating
-simultaneous peer-list updates on scale-up, fleet-wide cert rotation.
+**Phase 2 packaging has landed** (`Dockerfile`, `k8s/` — see `k8s/README.md`
+for the full quickstart): a distroless image from a static musl build, a
+StatefulSet + headless Service using stable pod DNS for peer bootstrap (no
+external discovery service needed), a client-facing Service,
+PodDisruptionBudget, NetworkPolicy (1883/8883 open, 7447 peer-to-peer only),
+and dev/staging/production Kustomize overlays. The Rust side (the
+`--peer-zero` bootstrap flag and its self-detection logic) is unit-tested
+and passes in this environment; the manifests were rendered and their
+content inspected field-by-field with `kustomize build`, but — worth
+repeating because it matters for anyone relying on this — **none of it has
+been applied to a real cluster or had its Docker image actually built**,
+since this environment has neither a Docker daemon nor `kubectl`/`kind`.
+`k8s/README.md` is written for a human to run the missing verification step
+(build the image, `kind load`, `kubectl apply -k`, confirm the mesh forms)
+on a machine that has Docker. A full HiveMQ-style *Operator* (vs. plain
+manifests/Kustomize) remains a legitimate but separate stretch goal: a
+StatefulSet's native rolling-restart behavior already gets correct
+one-at-a-time restarts with readiness gates for free; an operator earns its
+keep for things Kubernetes doesn't do natively — hot-applying config to
+running pods without restart (today: `SIGHUP` per pod via `kubectl exec`,
+manual and not fanned out), coordinating simultaneous peer-list updates on
+scale-up, fleet-wide cert rotation.
 
 ### Audit logging
 
@@ -340,14 +347,15 @@ subscriber for free, no special API layer required).
 
 ### Priority order
 
-1. Kubernetes packaging (Phase 2) — biggest, most overdue, blocks
-   production credibility and is already referenced as a dependency by
-   work shipped this session. **Still not started** — this environment has
-   no working Docker daemon or `kubectl`/`kind`, so manifests written here
-   couldn't be exercised end to end; flagging that constraint rather than
-   shipping unverified StatefulSet/Helm artifacts the way the chaos
-   manifests were (those were lower-stakes and clearly labeled
-   forward-looking).
+1. ✅ Kubernetes packaging (Phase 2) — biggest, most overdue, blocked
+   production credibility. Done: distroless image, StatefulSet + headless
+   Service peer bootstrap, PDB/NetworkPolicy, dev/staging/production
+   Kustomize overlays (`k8s/`, `k8s/README.md`). Still genuinely unverified
+   against a live cluster — this environment has no Docker daemon or
+   `kubectl`/`kind` — so the image build and `kubectl apply` steps need a
+   real run on a machine with Docker before trusting this in production;
+   the chaos manifests that depended on this landing can now target it for
+   real instead of staying forward-looking.
 2. ✅ Data Hub-style schema/behavior policy engine — done (v1: JSON Schema
    data policies + reconnect-churn as the one behavior-policy case that
    mattered most). Fully decentralization-compatible, no architectural

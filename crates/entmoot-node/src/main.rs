@@ -29,6 +29,14 @@ struct Args {
     /// Entmoot bus endpoint of a peer node, e.g. tcp/10.0.0.2:7447 (repeatable)
     #[arg(long = "peer")]
     peers: Vec<String>,
+    /// StatefulSet bootstrap: the bus endpoint of the ordinal-0 pod, e.g.
+    /// tcp/entmoot-0.entmoot-headless:7447. The same value is given to every
+    /// pod in the StatefulSet; added to --peer on every pod except ordinal 0
+    /// itself (detected by comparing against --id, so no shell/entrypoint
+    /// script is needed in the container). Gossip completes the rest of the
+    /// mesh from this one seed link — see k8s/README.md.
+    #[arg(long)]
+    peer_zero: Option<String>,
     /// Bus namespace prefix isolating the MQTT namespace on a shared fabric
     #[arg(long)]
     scope: Option<String>,
@@ -97,6 +105,11 @@ async fn main() -> Result<()> {
     }
     if !args.peers.is_empty() {
         cfg.peers = args.peers;
+    }
+    if let Some(peer_zero) = args.peer_zero {
+        if !is_peer_zero_self(&peer_zero, &cfg.id) {
+            cfg.peers.push(peer_zero);
+        }
     }
     if let Some(scope) = args.scope {
         cfg.scope = scope;
@@ -175,4 +188,35 @@ fn reload_from(broker: &entmoot_node::Broker, path: &Path) -> Result<()> {
     let raw = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
     let new_cfg: NodeConfig = toml::from_str(&raw).with_context(|| format!("parsing {}", path.display()))?;
     broker.reload(&new_cfg)
+}
+
+/// True if `peer_zero_endpoint` (e.g. "tcp/entmoot-0.entmoot-headless:7447")
+/// names this very node's `id` — i.e. this node *is* the StatefulSet's
+/// ordinal-0 pod and would otherwise try to peer with itself. Strips the
+/// `scheme/` prefix, the `:port` suffix, and everything after the first
+/// `.` (the rest of the DNS name), leaving just the hostname label to
+/// compare against `id` — which in a StatefulSet deployment is the pod's
+/// own stable name (`--id $(POD_NAME)`), the same string.
+fn is_peer_zero_self(peer_zero_endpoint: &str, id: &str) -> bool {
+    let without_scheme = peer_zero_endpoint.split_once('/').map_or(peer_zero_endpoint, |(_, rest)| rest);
+    let host = without_scheme.split(':').next().unwrap_or(without_scheme);
+    let first_label = host.split('.').next().unwrap_or(host);
+    first_label == id
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn peer_zero_self_detection() {
+        assert!(is_peer_zero_self("tcp/entmoot-0.entmoot-headless:7447", "entmoot-0"));
+        assert!(is_peer_zero_self(
+            "entmoot-0.entmoot-headless.default.svc.cluster.local:7447",
+            "entmoot-0"
+        ));
+        assert!(!is_peer_zero_self("tcp/entmoot-0.entmoot-headless:7447", "entmoot-1"));
+        // No accidental prefix match between "entmoot-0" and "entmoot-10".
+        assert!(!is_peer_zero_self("tcp/entmoot-0.entmoot-headless:7447", "entmoot-10"));
+    }
 }

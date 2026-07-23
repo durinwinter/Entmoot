@@ -1,0 +1,14 @@
+# Conservative base default (survive one voluntary disruption at a time,
+# e.g. a node drain); the production overlay raises minAvailable once
+# there's enough replicas that it's worth guaranteeing more headroom.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: entmoot
+  labels:
+    app: entmoot
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: entmoot

@@ -1,0 +1,33 @@
+# Client-facing MQTT ingress, load-balanced arbitrarily across all pods —
+# fine for the mesh's normal case (any node serves any client, retained
+# state is fully replicated). One real limitation worth knowing before
+# relying on this in production: persistent sessions (cleanSession=0) are
+# NOT yet replicated across nodes (see ENTERPRISE_ROADMAP.md, "the one real
+# architectural gap"). A client with a persistent session that reconnects
+# through this Service may land on a different pod than before and get a
+# fresh session rather than its old queued backlog. Until session-state
+# mesh replication ships, clients that depend on persistent sessions
+# surviving a reconnect should either tolerate that, or connect to a
+# specific pod directly via the headless Service
+# (<pod>.entmoot-headless.<namespace>.svc.cluster.local) instead of this
+# one.
+#
+# type: ClusterIP by default; the production overlay patches this to
+# LoadBalancer for external client access.
+apiVersion: v1
+kind: Service
+metadata:
+  name: entmoot
+  labels:
+    app: entmoot
+spec:
+  type: ClusterIP
+  selector:
+    app: entmoot
+  ports:
+    - name: mqtt
+      port: 1883
+      targetPort: 1883
+    - name: mqtts
+      port: 8883
+      targetPort: 8883

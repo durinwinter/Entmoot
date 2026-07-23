@@ -1,0 +1,114 @@
+# One shared pod template for every replica — no per-pod YAML, no
+# entrypoint shell script (the image is distroless/static: no shell at
+# all). Two things make that possible:
+#
+#   1. --id and the Downward API's $(POD_NAME) are the same string (a
+#      StatefulSet pod's stable name), so each pod gets its own identity
+#      just by referencing that one env var.
+#   2. --peer-zero tcp/entmoot-0.entmoot-headless:7447 is given to *every*
+#      pod, including entmoot-0 itself; the node binary detects "this
+#      endpoint's hostname label equals my own --id" and skips adding it as
+#      a peer in that one case (see is_peer_zero_self in
+#      crates/entmoot-node/src/main.rs). Every other pod peers at pod 0;
+#      gossip completes the rest of the mesh from that one seed link.
+#
+# Both --id and --peer-zero depend on the StatefulSet keeping its literal
+# name "entmoot" and the headless Service keeping its literal name
+# "entmoot-headless" — see k8s/overlays/README notes on why the overlays
+# differentiate by namespace, not by kustomize name-prefixing.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: entmoot
+  labels:
+    app: entmoot
+spec:
+  serviceName: entmoot-headless
+  replicas: 3
+  # Pods have no startup ordering dependency on each other (the mesh has no
+  # leader/consensus to elect), so there's no reason to pay for the default
+  # OrderedReady's one-at-a-time startup — publishNotReadyAddresses on the
+  # headless Service already lets pod 1..N resolve pod 0's DNS name before
+  # pod 0 itself is Ready, which is all --peer-zero needs.
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      app: entmoot
+  template:
+    metadata:
+      labels:
+        app: entmoot
+    spec:
+      serviceAccountName: entmoot
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: entmoot
+          image: entmoot:latest
+          imagePullPolicy: IfNotPresent
+          args:
+            - --config
+            - /etc/entmoot/entmoot.toml
+            - --id
+            - $(POD_NAME)
+            - --bus-listen
+            - tcp/0.0.0.0:7447
+            - --peer-zero
+            - tcp/entmoot-0.entmoot-headless:7447
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          ports:
+            - name: mqtt
+              containerPort: 1883
+            - name: mqtts
+              containerPort: 8883
+            - name: bus
+              containerPort: 7447
+            - name: metrics
+              containerPort: 9464
+            - name: health
+              containerPort: 9465
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          volumeMounts:
+            - name: config
+              mountPath: /etc/entmoot
+              readOnly: true
+            - name: data
+              mountPath: /var/lib/entmoot
+      volumes:
+        - name: config
+          secret:
+            secretName: entmoot-config
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi

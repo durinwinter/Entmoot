@@ -1,0 +1,8 @@
+# Single replica: fastest local iteration (kind), no multi-node mesh
+# behavior to reason about while just testing a config change or a new build.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: entmoot
+spec:
+  replicas: 1

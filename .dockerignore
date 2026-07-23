@@ -1,0 +1,8 @@
+target
+.git
+*.log
+chaos
+k8s
+web
+scripts
+*.md

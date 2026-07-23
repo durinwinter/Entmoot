@@ -1,0 +1,7 @@
+# External client access; base defaults to ClusterIP (in-cluster only).
+apiVersion: v1
+kind: Service
+metadata:
+  name: entmoot
+spec:
+  type: LoadBalancer

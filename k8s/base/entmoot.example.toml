@@ -1,0 +1,46 @@
+# Template for the Secret every entmoot pod mounts at /etc/entmoot/entmoot.toml
+# (see k8s/README.md for the exact `kubectl create secret` command). Not a
+# Kubernetes resource itself — copy this, replace the password hashes with
+# real ones (`entmoot --hash-password '...'`), and generate the Secret from
+# your copy. id/bus_listen/peers are deliberately absent here: they're set
+# per-pod via the StatefulSet's --id/--bus-listen/--peer-zero args instead,
+# since every pod shares this one file.
+#
+# Hot reload: after editing a live Secret, `kubectl apply` it again, then
+# `kubectl exec <pod> -- kill -HUP 1` per pod to pick up users/[[acl]]/
+# [[schema]]/staleness changes without a restart (see PLAN.md).
+
+max_packet_size = 262144
+max_connections = 10000
+max_publish_rate = 500
+data_dir = "/var/lib/entmoot"
+metrics_listen = "0.0.0.0:9464"
+health_listen = "0.0.0.0:9465"
+session_expiry_secs = 86400
+max_queued_per_session = 1000
+slow_consumer_grace_ms = 5000
+sys_interval_secs = 10
+connect_admission_rate = 200      # a real starting point for a client-facing node; 0 = off
+connect_admission_burst = 200
+retained_staleness_secs = 0
+
+[auth]
+allow_anonymous = false
+default_policy = "deny"
+
+[[auth.users]]
+name = "plc1"
+# entmoot --hash-password 'replace-me-before-real-deployment'
+password_sha256 = "5db1fee4b5703808c48078a76768b155b421b210c0761cd6a5d223f4d99f1eaa"
+
+[[acl]]
+user = "plc1"
+publish = ["plant/#"]
+subscribe = ["plant/#"]
+
+# TLS (8883): mount a second Secret with server.pem/server.key at
+# /etc/entmoot/tls/ (see k8s/README.md) and uncomment:
+# [tls]
+# listen = "0.0.0.0:8883"
+# cert_file = "/etc/entmoot/tls/server.pem"
+# key_file = "/etc/entmoot/tls/server.key"
