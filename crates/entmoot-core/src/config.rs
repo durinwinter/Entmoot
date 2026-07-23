@@ -92,6 +92,11 @@ pub struct NodeConfig {
     /// the given JSON Schema, or `on_fail` applies. First matching rule wins;
     /// topics matching none are unvalidated (as today).
     pub schema: Vec<SchemaRule>,
+    /// Per-identity concurrent connection caps, so one tenant/identity can't
+    /// exhaust `max_connections` and starve everyone else sharing this node.
+    /// The exact identity (or "*" as a fallback) wins; absent = no
+    /// per-identity cap beyond the node-wide `max_connections` ceiling.
+    pub quota: Vec<QuotaRule>,
 }
 
 impl Default for NodeConfig {
@@ -124,6 +129,7 @@ impl Default for NodeConfig {
             auth: AuthConfig::default(),
             acl: Vec::new(),
             schema: Vec::new(),
+            quota: Vec::new(),
         }
     }
 }
@@ -227,6 +233,17 @@ impl Default for AclRule {
     fn default() -> Self {
         Self { user: "*".into(), publish: Vec::new(), subscribe: Vec::new() }
     }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct QuotaRule {
+    /// Identity this quota applies to; "*" matches every identity that has
+    /// no more specific rule of its own, same precedence as `AclRule.user`.
+    pub user: String,
+    /// Maximum concurrent live connections this identity may hold on this
+    /// node. 0 = unlimited (equivalent to omitting the rule entirely).
+    pub max_connections: usize,
 }
 
 #[derive(Debug, Clone, Deserialize)]

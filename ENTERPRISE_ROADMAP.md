@@ -336,14 +336,25 @@ like everything else in this category.
 ### Multi-tenancy and quotas
 
 `--scope` already gives full tenant *isolation* (no topic-namespace
-collision) but no per-scope *quotas* — connection limits, publish rate,
-retained count, and offline-queue depth are global per-node today, not
-per-tenant. Fully local, no-coordination-needed fix: key the existing
-counters by scope instead of globally, same shape as today's global ones. A
-*global* cross-node quota ("tenant X gets 1000 connections total across
-the whole mesh") is harder and probably not worth inventing a consensus
-mechanism for — document per-node quotas as the pragmatic answer and let
-an ingress/LB layer or capacity planning handle the rest.
+collision), but it's a node-wide bus-namespace prefix fixed for the whole
+process — there is exactly one scope per running node, never several
+multiplexed on one — so it was never actually the right axis for
+per-tenant *quotas* within a single node; identity (the authenticated
+username or certificate CN), which `AclRule` already keys on, is. **Done**:
+`[[quota]]` rules (`crates/entmoot-core/src/quota.rs`,
+`crates/entmoot-node/src/quota.rs`) cap how many concurrent connections a
+given identity may hold, independent of client id and independent of the
+node-wide `max_connections` ceiling — so one noisy or misconfigured tenant
+can't exhaust the node for everyone else sharing it. Hot-reloadable
+alongside auth/ACL/schema/staleness. What was scoped out and remains
+correctly unbuilt: publish-rate, retained-count, and offline-queue-depth
+quotas are already finer-grained than per-tenant today (per-connection and
+per-session respectively, see `connection.rs`/`session.rs`), so there was
+no actual per-tenant gap there to close. A *global* cross-node quota
+("tenant X gets 1000 connections total across the whole mesh") is harder
+and probably not worth inventing a consensus mechanism for — per-node
+quotas plus an ingress/LB layer or capacity planning remain the pragmatic
+answer for that case.
 
 ### Where Entmoot already has a structural edge
 
@@ -379,7 +390,9 @@ subscriber for free, no special API layer required).
    now on `$meta/clients` too) — both landed, both built directly on
    workstream 6. Still missing: the actual live dashboard UI consuming
    these (a frontend task, not a protocol one).
-5. Per-scope quotas — moderate effort, purely local.
+5. ✅ Per-identity connection quotas (reframed from "per-scope" — `--scope`
+   is fixed 1:1 per node, identity is the actual multi-tenant axis;
+   `quota.rs` in both crates) — moderate effort, purely local, done.
 6. Session-state mesh replication (true session HA) — the hardest,
    most architecturally novel item; needs dedicated design time for the
    cross-node liveliness/ownership question, not a quick win.

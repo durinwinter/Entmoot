@@ -19,6 +19,7 @@ pub struct Metrics {
     pub connect_refused_total: AtomicU64,
     pub connect_shed_total: AtomicU64,
     pub churn_quarantined_total: AtomicU64,
+    pub quota_refused_total: AtomicU64,
     pub messages_in_total: AtomicU64,
     pub messages_out_total: AtomicU64,
     pub messages_queued_total: AtomicU64,
@@ -52,6 +53,7 @@ pub fn render(broker: &Broker) -> String {
     metric("connect_refused_total", "counter", "CONNECTs refused (auth)", c(&m.connect_refused_total));
     metric("connect_shed_total", "counter", "CONNECTs shed by admission control (reconnect-storm protection)", c(&m.connect_shed_total));
     metric("churn_quarantined_total", "counter", "CONNECTs refused because that client id was reconnecting too often", c(&m.churn_quarantined_total));
+    metric("quota_refused_total", "counter", "CONNECTs refused because that identity was already at its per-identity connection quota", c(&m.quota_refused_total));
     metric("messages_in_total", "counter", "PUBLISH packets accepted from clients", c(&m.messages_in_total));
     metric("messages_out_total", "counter", "PUBLISH packets delivered to clients", c(&m.messages_out_total));
     metric("messages_queued_total", "counter", "Messages queued for offline sessions", c(&m.messages_queued_total));

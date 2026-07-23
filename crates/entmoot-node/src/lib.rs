@@ -11,6 +11,7 @@ mod connection;
 pub mod ctl;
 mod health;
 mod metrics;
+mod quota;
 mod retained;
 mod session;
 
@@ -18,6 +19,7 @@ pub use admission::ConnectAdmission;
 pub use churn::ChurnGuard;
 pub use ctl::DisconnectOutcome;
 pub use metrics::Metrics;
+pub use quota::IdentityConns;
 pub use retained::RetainedStore;
 pub use session::SessionRegistry;
 
@@ -40,8 +42,9 @@ pub struct Broker {
     pub session: zenoh::Session,
     pub cfg: NodeConfig,
     /// File-sourced and hot-reloadable (see `reload`): users, ACL rules,
-    /// data-validation schemas, and staleness bounds. Everything else on
-    /// `Broker` is fixed for the node's lifetime.
+    /// data-validation schemas, staleness bounds, and per-identity
+    /// connection quotas. Everything else on `Broker` is fixed for the
+    /// node's lifetime.
     pub auth: ArcSwap<Authenticator>,
     pub acl: ArcSwap<Acl>,
     pub retained: Arc<RetainedStore>,
@@ -51,6 +54,11 @@ pub struct Broker {
     pub churn: ChurnGuard,
     pub staleness: ArcSwap<entmoot_core::staleness::StalenessPolicy>,
     pub schema: ArcSwap<entmoot_core::schema::SchemaPolicy>,
+    pub quota: ArcSwap<entmoot_core::quota::QuotaPolicy>,
+    /// Live per-identity connection counts the quota policy above is
+    /// checked against; not hot-reloaded itself (a reload only changes the
+    /// caps, not who's currently connected).
+    pub identity_conns: IdentityConns,
     conn_count: AtomicUsize,
 }
 
@@ -60,8 +68,9 @@ impl Broker {
     }
 
     /// Hot-reload the file-sourced, safely-reloadable parts of config:
-    /// users/passwords, ACL rules, JWT settings, schema rules, and
-    /// staleness bounds. Builds every replacement before swapping any of
+    /// users/passwords, ACL rules, JWT settings, schema rules, staleness
+    /// bounds, and per-identity connection quotas. Builds every replacement
+    /// before swapping any of
     /// them in, so a bad reload (e.g. a malformed schema) changes nothing
     /// rather than half-applying — the node keeps serving under the
     /// previous config, unchanged.
@@ -74,11 +83,13 @@ impl Broker {
             new_cfg.staleness.clone(),
             new_cfg.retained_staleness_secs,
         );
+        let quota = entmoot_core::quota::QuotaPolicy::new(new_cfg.quota.clone());
 
         self.auth.store(Arc::new(auth));
         self.acl.store(Arc::new(acl));
         self.schema.store(Arc::new(schema));
         self.staleness.store(Arc::new(staleness));
+        self.quota.store(Arc::new(quota));
         Ok(())
     }
 }
@@ -298,6 +309,8 @@ pub async fn run(cfg: NodeConfig) -> Result<BrokerHandle> {
             cfg.retained_staleness_secs,
         )),
         schema: ArcSwap::from_pointee(schema),
+        quota: ArcSwap::from_pointee(entmoot_core::quota::QuotaPolicy::new(cfg.quota.clone())),
+        identity_conns: IdentityConns::default(),
         session,
         cfg,
         conn_count: AtomicUsize::new(0),

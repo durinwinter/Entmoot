@@ -11,11 +11,13 @@
 //! configured rate are refused with `ServiceUnavailable` before any auth or
 //! session work, ahead of the reconnect-storm path in `admission.rs`),
 //! reconnect-churn quarantine (a specific client id reconnecting too often
-//! is refused for a cooldown, see `churn.rs`), password or client-cert auth
-//! on CONNECT, per-identity topic ACLs (denied publishes are dropped and
-//! logged, mosquitto-style, to avoid reconnect storms from misconfigured
-//! devices; denied subscriptions get a SUBACK failure), a per-connection
-//! publish rate limit whose violators are disconnected, and JSON Schema
+//! is refused for a cooldown, see `churn.rs`), a per-identity connection
+//! quota independent of the node-wide `max_connections` ceiling (so one
+//! tenant/identity can't exhaust it, see `quota.rs`), password or
+//! client-cert auth on CONNECT, per-identity topic ACLs (denied publishes
+//! are dropped and logged, mosquitto-style, to avoid reconnect storms from
+//! misconfigured devices; denied subscriptions get a SUBACK failure), a
+//! per-connection publish rate limit whose violators are disconnected, and JSON Schema
 //! data validation (`entmoot_core::schema`) on publishes matching a
 //! configured topic filter — dropped or disconnected per the rule's
 //! `on_fail` action. Auth failures and ACL denials (publish/subscribe/will)
@@ -124,6 +126,21 @@ where
         return Ok(());
     }
 
+    // Per-identity connection quota (ENTERPRISE_ROADMAP.md "multi-tenancy
+    // and quotas"): independent of the node-wide `max_connections` ceiling,
+    // caps how many of those connections any single identity may hold, so
+    // one tenant can't exhaust the node for everyone else sharing it. Held
+    // for the lifetime of this connection via `_quota_guard` below.
+    let quota_limit = broker.quota.load().max_connections_for(&identity);
+    if !broker.identity_conns.try_admit(&identity, quota_limit) {
+        warn!(client = %client_id, addr = %peer, user = %identity, "CONNECT refused: per-identity connection quota exceeded");
+        Metrics::bump(&broker.metrics.quota_refused_total);
+        conn.write_packet(&Packet::ConnAck(ConnAck::new(ConnectReturnCode::ServiceUnavailable, false)))
+            .await?;
+        return Ok(());
+    }
+    let _quota_guard = IdentityConnGuard { broker: broker.clone(), identity: identity.clone() };
+
     Metrics::bump(&broker.metrics.connections_total);
 
     let (reader, writer_tx, writer_task) = conn.split();
@@ -198,6 +215,20 @@ async fn publish_client_event(broker: &Broker, client_id: &str, event: &str) {
     let ke = topic::meta_keyexpr(&format!("clients/{}/{client_id}", broker.cfg.id), &broker.cfg.scope);
     if let Err(e) = broker.session.put(&ke, event.as_bytes().to_vec()).await {
         warn!(client = client_id, "client meta event publish failed: {e}");
+    }
+}
+
+/// Releases this connection's per-identity quota slot when the connection
+/// ends, however it ends (mirrors `ConnGuard` in `lib.rs` for the node-wide
+/// count).
+struct IdentityConnGuard {
+    broker: Arc<Broker>,
+    identity: String,
+}
+
+impl Drop for IdentityConnGuard {
+    fn drop(&mut self) {
+        self.broker.identity_conns.release(&self.identity);
     }
 }
 
