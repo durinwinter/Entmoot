@@ -121,7 +121,7 @@ async fn revoked_acl_drops_persisted_subscription_on_rehydrate() {
 
     let mut cfg = node_cfg("ra-1", 18873, 17503);
     cfg.data_dir = Some(dir.to_string_lossy().into_owned());
-    cfg.auth = AuthConfig { allow_anonymous: true, default_policy: Policy::Deny, users: vec![] };
+    cfg.auth = AuthConfig { allow_anonymous: true, default_policy: Policy::Deny, users: vec![], jwt: None };
     cfg.acl = vec![AclRule {
         user: "*".into(),
         publish: vec!["plant/#".into()],
@@ -143,7 +143,7 @@ async fn revoked_acl_drops_persisted_subscription_on_rehydrate() {
     // can still prove the message crosses the mesh but isn't captured).
     let mut cfg = node_cfg("ra-2", 18874, 17504);
     cfg.data_dir = Some(dir.to_string_lossy().into_owned());
-    cfg.auth = AuthConfig { allow_anonymous: true, default_policy: Policy::Deny, users: vec![] };
+    cfg.auth = AuthConfig { allow_anonymous: true, default_policy: Policy::Deny, users: vec![], jwt: None };
     cfg.acl = vec![AclRule { user: "*".into(), publish: vec!["plant/#".into()], subscribe: vec![] }];
     let node = entmoot_node::run(cfg).await.unwrap();
 

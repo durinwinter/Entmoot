@@ -1,7 +1,8 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use entmoot_core::NodeConfig;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 /// Entmoot databus node — MQTT 3.1.1 frontend over the Entmoot bus.
 ///
@@ -129,8 +130,49 @@ async fn main() -> Result<()> {
         tracing::warn!("running OPEN (anonymous, no ACLs enforced) — fine for dev, not for production");
     }
 
-    let _handle = entmoot_node::run(cfg).await?;
+    let handle = entmoot_node::run(cfg).await?;
+
+    #[cfg(unix)]
+    if let Some(path) = args.config {
+        tokio::spawn(reload_on_sighup(handle.broker.clone(), path));
+    }
+
     tokio::signal::ctrl_c().await?;
     tracing::info!("shutting down");
     Ok(())
+}
+
+/// SIGHUP re-reads the config file and hot-reloads the safely-reloadable
+/// parts (users, ACLs, schema rules, staleness bounds) via `Broker::reload`
+/// — everything else (listeners, data_dir, TLS certs, ...) needs a restart.
+/// A malformed file or an invalid schema logs and changes nothing; the node
+/// keeps serving under its previous config. CLI-flag overrides applied at
+/// startup are not re-applied on reload — a reload reflects the file as
+/// written, so an active `--retained-staleness-secs` override (for example)
+/// would revert to the file's value.
+#[cfg(unix)]
+async fn reload_on_sighup(broker: Arc<entmoot_node::Broker>, path: PathBuf) {
+    use tokio::signal::unix::{signal, SignalKind};
+    let mut sighup = match signal(SignalKind::hangup()) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!("could not install SIGHUP handler: {e}");
+            return;
+        }
+    };
+    loop {
+        sighup.recv().await;
+        tracing::info!(file = %path.display(), "SIGHUP received, reloading config");
+        match reload_from(&broker, &path) {
+            Ok(()) => tracing::info!("config reload succeeded: users/ACLs/schema/staleness updated"),
+            Err(e) => tracing::warn!("config reload failed, keeping previous config: {e:#}"),
+        }
+    }
+}
+
+#[cfg(unix)]
+fn reload_from(broker: &entmoot_node::Broker, path: &Path) -> Result<()> {
+    let raw = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    let new_cfg: NodeConfig = toml::from_str(&raw).with_context(|| format!("parsing {}", path.display()))?;
+    broker.reload(&new_cfg)
 }

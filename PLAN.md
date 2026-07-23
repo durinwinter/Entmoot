@@ -187,6 +187,19 @@ identity-aware complement to it. See ENTERPRISE_ROADMAP.md's HiveMQ
 feature-parity map for the full reasoning (Entmoot's take on HiveMQ's Data
 Governance Hub).
 
+### Config hot reload and JWT auth
+
+Users, `[[acl]]`, `[[schema]]`, and staleness settings can be changed and
+picked up by sending a running node `SIGHUP` — no restart, and a malformed
+edit is logged and ignored rather than half-applied (`Broker::reload`,
+backed by `ArcSwap` for lock-free reads on the hot path). `[auth.jwt]` adds
+bearer-token auth (HS256, static shared secret) additive to local users: an
+unrecognized username's password is tried as a JWT instead of an outright
+refusal, and the token's identity claim becomes the ACL identity. See
+ENTERPRISE_ROADMAP.md's Enterprise Security Extension section for what's
+still open (LDAP/AD, full OAuth2/OIDC with JWKS, per-client dynamic
+permissions).
+
 ### Why not OpenZiti for this?
 
 Considered and parked: OpenZiti is a zero-trust *connectivity* overlay (identity-based

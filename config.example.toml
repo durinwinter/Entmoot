@@ -1,5 +1,12 @@
 # Entmoot node configuration — hardened example.
 # Start with: entmoot --config entmoot.toml
+#
+# Hot reload: users, [[acl]], [[schema]], and the staleness settings below
+# can be changed and picked up without a restart by editing this file and
+# sending the node process SIGHUP (kill -HUP <pid>). Everything else
+# (listeners, data_dir, TLS certs, ...) still needs a restart. A malformed
+# file or invalid schema is logged and ignored — the node keeps running on
+# its previous config, never half-applies a bad reload.
 
 id = "ent-1"
 mqtt_listen = "0.0.0.0:1883"
@@ -48,6 +55,16 @@ password_sha256 = "5db1fee4b5703808c48078a76768b155b421b210c0761cd6a5d223f4d99f1
 [[auth.users]]
 name = "scada"
 password_sha256 = "5db1fee4b5703808c48078a76768b155b421b210c0761cd6a5d223f4d99f1eaa"
+
+# Bearer-token auth: additive to the users above. When a CONNECT's username
+# doesn't match a local user, its password is tried as a JWT (HS256, static
+# shared secret — no JWKS/OIDC discovery). identity_claim's value becomes
+# the authenticated identity for ACL matching.
+# [auth.jwt]
+# hmac_secret = "change-me-to-a-real-shared-secret"
+# identity_claim = "sub"           # default
+# issuer = "https://idp.example.com/"
+# audience = "entmoot"
 
 [[acl]]
 user = "plc1"

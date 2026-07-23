@@ -128,3 +128,8 @@ often — Entmoot's take on HiveMQ's Data Hub schema/behavior policies. See
 feature-parity map and what's still open (Kubernetes packaging is the
 biggest gap — this environment has no working Docker/kubectl to build and
 verify it against, so it's flagged rather than shipped unverified).
+
+Dynamic auth: `SIGHUP` hot-reloads users/`[[acl]]`/`[[schema]]`/staleness
+settings without a restart (a bad edit is logged and ignored, never
+half-applied), and `[auth.jwt]` adds bearer-token auth (HS256, static
+shared secret) additive to local users.

@@ -131,6 +131,7 @@ fn secured_cfg(mqtt_port: u16, zenoh_port: u16) -> NodeConfig {
         allow_anonymous: false,
         default_policy: Policy::Deny,
         users: vec![UserCred { name: "ops".into(), password_sha256: sha256_hex("hunter2") }],
+        jwt: None,
     };
     cfg.acl = vec![AclRule {
         user: "ops".into(),

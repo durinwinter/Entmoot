@@ -238,6 +238,7 @@ async fn mtls_cn_is_the_acl_identity() {
         allow_anonymous: false,
         default_policy: Policy::Deny,
         users: vec![],
+        jwt: None,
     };
     cfg.acl = vec![AclRule {
         user: "plc1".into(),

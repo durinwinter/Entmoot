@@ -202,21 +202,51 @@ full and the one behavior case that mattered most given this repo's own
 reconnect-storm work, not a generalized framework nobody's asked to extend
 yet.
 
-### Enterprise Security Extension (LDAP, OAuth2/JWT, RBAC, dynamic permissions)
+### Enterprise Security Extension (LDAP, OAuth2/JWT, RBAC, dynamic permissions) — partly done
 
-Entmoot auth today is a static TOML file: SHA-256 password hashes, static
-per-user ACL rules, mTLS CN identity — no LDAP/AD, no OAuth2/JWT, no
-runtime reload (changing a user or ACL rule needs a restart), no per-client
-dynamic permission templating, no certificate revocation checking
-(CRL/OCSP). None of this needs cross-node coordination — auth and ACL
-decisions are already, and always will be, a stateless per-connection
-lookup evaluated locally by whichever node the client happens to land on.
-The gap is entirely about *what the lookup source is*, not the
-architecture. Practical order: (1) hot-reload the TOML file on SIGHUP or a
-watched path — quick, fully decentralized-compatible, each node reloads
-independently; (2) JWT/OAuth2 bearer validation against a JWKS endpoint on
-CONNECT; (3) LDAP/AD bind; (4) per-client dynamic permission
-placeholders as a config-schema extension; (5) CRL/OCSP checking for mTLS.
+Entmoot auth used to be a static TOML file only: SHA-256 password hashes,
+static per-user ACL rules, mTLS CN identity — no LDAP/AD, no OAuth2/JWT, no
+runtime reload, no per-client dynamic permission templating, no certificate
+revocation checking (CRL/OCSP). None of this needs cross-node
+coordination — auth and ACL decisions are already, and always will be, a
+stateless per-connection lookup evaluated locally by whichever node the
+client happens to land on. The gap was entirely about *what the lookup
+source is*, not the architecture. Planned order was: (1) hot-reload, (2)
+JWT/OAuth2 bearer validation, (3) LDAP/AD bind, (4) per-client dynamic
+permission placeholders, (5) CRL/OCSP checking.
+
+(1) and (2) are done:
+
+- **Hot reload** (`Broker::reload`, wired to SIGHUP in `main.rs`): users,
+  `[[acl]]`, `[[schema]]`, and staleness settings swap in atomically —
+  built and validated before anything is replaced, so a malformed file or a
+  bad schema is logged and changes nothing rather than half-applying. The
+  swap itself uses `ArcSwap` (lock-free reads on every publish/subscribe/
+  connect, which is the hot path this touches); listeners, `data_dir`, and
+  TLS certs still need a restart. Verified two ways: `Broker::reload`
+  called directly in integration tests (three tests in
+  `tests/hot_reload.rs` — new user, ACL change, and a rejected bad reload,
+  all without restarting the node), and a manual end-to-end smoke test
+  sending a real `SIGHUP` to a running process and confirming a newly added
+  user could connect. The SIGHUP plumbing itself isn't covered by the
+  automated suite: `cargo test` runs many tests in one process, and a real
+  signal would hit every test's handler at once, not just the one under
+  test — noted in the test file rather than glossed over.
+- **JWT bearer auth**: `[auth.jwt]` — HS256 with a static shared secret, not
+  full OAuth2/OIDC with JWKS discovery (a live-key-rotation flow is a
+  separate, bigger feature; static-key verification covers the common
+  on-prem/industrial case of a fixed signing key or a locally mirrored
+  key). Additive to local users: a CONNECT whose username isn't a known
+  local user gets its password tried as a JWT instead of an outright
+  refusal; a username that *is* a known local user must still authenticate
+  with that user's own password, never a token. `identity_claim`'s value
+  (default `sub`) becomes the authenticated identity for ACL matching.
+  Tests: unit tests in `crates/entmoot-core/src/auth.rs` (valid token,
+  wrong secret, wrong issuer, expired, missing `exp`, and the
+  known-user-can't-use-a-token case) plus an integration test in
+  `tests/jwt_auth.rs` driving real CONNECTs with real signed tokens.
+
+(3), (4), (5) remain open.
 
 ### Control Center (live admin UI + REST API)
 
@@ -322,8 +352,8 @@ subscriber for free, no special API layer required).
    data policies + reconnect-churn as the one behavior-policy case that
    mattered most). Fully decentralization-compatible, no architectural
    risk shipped.
-3. Pluggable/dynamic auth — hot-reload first, then JWT/OAuth2, then LDAP —
-   fully decentralization-compatible.
+3. ✅ Pluggable/dynamic auth — done through hot-reload and static-key JWT;
+   LDAP/AD bind and per-client dynamic permission placeholders remain open.
 4. Control-center-lite (force-disconnect over `$meta/clients`) and the
    audit-event extension — both cheap, both build directly on workstream 6.
 5. Per-scope quotas — moderate effort, purely local.

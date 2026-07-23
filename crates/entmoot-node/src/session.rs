@@ -232,7 +232,7 @@ async fn rehydrate_one(broker: &Arc<Broker>, path: &Path) -> anyhow::Result<Stri
     ));
     session.inner.lock().unwrap().identity = identity.clone();
     for (filter, qos) in filters {
-        if !broker.acl.may_subscribe(&identity, &filter) {
+        if !broker.acl.load().may_subscribe(&identity, &filter) {
             warn!(client = %client_id, filter, "dropping persisted subscription: no longer permitted by ACL");
             continue;
         }

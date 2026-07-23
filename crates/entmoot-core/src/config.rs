@@ -159,12 +159,40 @@ pub struct AuthConfig {
     /// "deny": only topics granted by an [[acl]] entry are permitted.
     pub default_policy: Policy,
     pub users: Vec<UserCred>,
+    /// Bearer-token auth: when a CONNECT's username doesn't match a local
+    /// user, its password is tried as a JWT. Additive to `users`, not a
+    /// replacement — existing local-user deployments are unaffected.
+    pub jwt: Option<JwtConfig>,
 }
 
 impl Default for AuthConfig {
     fn default() -> Self {
-        Self { allow_anonymous: true, default_policy: Policy::Allow, users: Vec::new() }
+        Self { allow_anonymous: true, default_policy: Policy::Allow, users: Vec::new(), jwt: None }
     }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct JwtConfig {
+    /// HMAC-SHA256 shared secret used to verify token signatures. Static-key
+    /// verification only (HS256) — no JWKS/OIDC discovery; if a deployment
+    /// needs to trust a live identity provider's rotating keys instead of a
+    /// fixed shared secret, that's a bigger, separate feature.
+    pub hmac_secret: String,
+    /// Claim whose value becomes the authenticated identity (for ACL
+    /// matching).
+    #[serde(default = "default_jwt_identity_claim")]
+    pub identity_claim: String,
+    /// Required `iss` claim, if any.
+    #[serde(default)]
+    pub issuer: Option<String>,
+    /// Required `aud` claim, if any.
+    #[serde(default)]
+    pub audience: Option<String>,
+}
+
+fn default_jwt_identity_claim() -> String {
+    "sub".into()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]

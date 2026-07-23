@@ -20,6 +20,7 @@ pub use retained::RetainedStore;
 pub use session::SessionRegistry;
 
 use anyhow::{anyhow, Context, Result};
+use arc_swap::ArcSwap;
 use entmoot_core::auth::{Acl, Authenticator};
 use entmoot_core::NodeConfig;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -36,21 +37,47 @@ const SWEEP_INTERVAL: Duration = Duration::from_secs(30);
 pub struct Broker {
     pub session: zenoh::Session,
     pub cfg: NodeConfig,
-    pub auth: Authenticator,
-    pub acl: Acl,
+    /// File-sourced and hot-reloadable (see `reload`): users, ACL rules,
+    /// data-validation schemas, and staleness bounds. Everything else on
+    /// `Broker` is fixed for the node's lifetime.
+    pub auth: ArcSwap<Authenticator>,
+    pub acl: ArcSwap<Acl>,
     pub retained: Arc<RetainedStore>,
     pub registry: SessionRegistry,
     pub metrics: Metrics,
     pub connect_admission: ConnectAdmission,
     pub churn: ChurnGuard,
-    pub staleness: entmoot_core::staleness::StalenessPolicy,
-    pub schema: entmoot_core::schema::SchemaPolicy,
+    pub staleness: ArcSwap<entmoot_core::staleness::StalenessPolicy>,
+    pub schema: ArcSwap<entmoot_core::schema::SchemaPolicy>,
     conn_count: AtomicUsize,
 }
 
 impl Broker {
     pub fn connections(&self) -> usize {
         self.conn_count.load(Ordering::Relaxed)
+    }
+
+    /// Hot-reload the file-sourced, safely-reloadable parts of config:
+    /// users/passwords, ACL rules, JWT settings, schema rules, and
+    /// staleness bounds. Builds every replacement before swapping any of
+    /// them in, so a bad reload (e.g. a malformed schema) changes nothing
+    /// rather than half-applying — the node keeps serving under the
+    /// previous config, unchanged.
+    pub fn reload(&self, new_cfg: &NodeConfig) -> Result<()> {
+        let auth = Authenticator::new(&new_cfg.auth);
+        let acl = Acl::new(new_cfg.acl.clone(), new_cfg.auth.default_policy);
+        let schema = entmoot_core::schema::SchemaPolicy::new(new_cfg.schema.clone())
+            .map_err(|e| anyhow!("invalid [[schema]] config: {e}"))?;
+        let staleness = entmoot_core::staleness::StalenessPolicy::new(
+            new_cfg.staleness.clone(),
+            new_cfg.retained_staleness_secs,
+        );
+
+        self.auth.store(Arc::new(auth));
+        self.acl.store(Arc::new(acl));
+        self.schema.store(Arc::new(schema));
+        self.staleness.store(Arc::new(staleness));
+        Ok(())
     }
 }
 
@@ -232,8 +259,8 @@ pub async fn run(cfg: NodeConfig) -> Result<BrokerHandle> {
         .map_err(|e| anyhow!("invalid [[schema]] config: {e}"))?;
 
     let broker = Arc::new(Broker {
-        auth: Authenticator::new(&cfg.auth),
-        acl: Acl::new(cfg.acl.clone(), cfg.auth.default_policy),
+        auth: ArcSwap::from_pointee(Authenticator::new(&cfg.auth)),
+        acl: ArcSwap::from_pointee(Acl::new(cfg.acl.clone(), cfg.auth.default_policy)),
         retained,
         registry: SessionRegistry::new(
             cfg.max_queued_per_session,
@@ -244,11 +271,11 @@ pub async fn run(cfg: NodeConfig) -> Result<BrokerHandle> {
         metrics: Metrics::default(),
         connect_admission: ConnectAdmission::new(cfg.connect_admission_rate, cfg.connect_admission_burst),
         churn: ChurnGuard::new(cfg.churn_max_reconnects, cfg.churn_window_secs, cfg.churn_cooldown_secs),
-        staleness: entmoot_core::staleness::StalenessPolicy::new(
+        staleness: ArcSwap::from_pointee(entmoot_core::staleness::StalenessPolicy::new(
             cfg.staleness.clone(),
             cfg.retained_staleness_secs,
-        ),
-        schema,
+        )),
+        schema: ArcSwap::from_pointee(schema),
         session,
         cfg,
         conn_count: AtomicUsize::new(0),

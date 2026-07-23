@@ -85,7 +85,7 @@ where
                 .login
                 .as_ref()
                 .map(|l| (l.username.as_str(), l.password.as_str()));
-            match broker.auth.authenticate(login) {
+            match broker.auth.load().authenticate(login) {
                 Ok(identity) => identity,
                 Err(denied) => {
                     let code = match denied {
@@ -303,11 +303,11 @@ impl Client {
         let ke = topic::topic_to_keyexpr(&p.topic, &self.broker.cfg.scope)
             .map_err(|e| anyhow!("invalid publish topic {:?}: {e}", p.topic))?;
 
-        if !self.broker.acl.may_publish(&self.identity, &p.topic) {
+        if !self.broker.acl.load().may_publish(&self.identity, &p.topic) {
             warn!(client = %self.id, user = %self.identity, topic = %p.topic,
                   "publish denied by ACL, dropping");
             Metrics::bump(&self.broker.metrics.publish_denied_total);
-        } else if let SchemaVerdict::Fail(action) = self.broker.schema.check(&p.topic, &p.payload) {
+        } else if let SchemaVerdict::Fail(action) = self.broker.schema.load().check(&p.topic, &p.payload) {
             Metrics::bump(&self.broker.metrics.schema_denied_total);
             match action {
                 // Same reasoning as an ACL-denied publish: acked anyway
@@ -359,7 +359,7 @@ impl Client {
             Metrics::bump(&self.broker.metrics.subscribe_denied_total);
             return SubscribeReasonCode::Failure;
         }
-        if !self.broker.acl.may_subscribe(&self.identity, filter) {
+        if !self.broker.acl.load().may_subscribe(&self.identity, filter) {
             warn!(client = %self.id, user = %self.identity, filter,
                   "subscription denied by ACL");
             Metrics::bump(&self.broker.metrics.subscribe_denied_total);
@@ -407,7 +407,7 @@ impl Client {
     /// path (like `$SYS`), so it reaches every subscribed session, not just
     /// this one connection, and only those that actually asked for it.
     async fn flag_if_stale(&self, topic_name: &str, written_at: SystemTime) {
-        let bound = self.broker.staleness.bound_secs(topic_name);
+        let bound = self.broker.staleness.load().bound_secs(topic_name);
         if bound == 0 {
             return;
         }
@@ -425,7 +425,7 @@ impl Client {
 
     async fn fire_will(&mut self) {
         let Some(will) = self.will.take() else { return };
-        if !self.broker.acl.may_publish(&self.identity, &will.topic) {
+        if !self.broker.acl.load().may_publish(&self.identity, &will.topic) {
             warn!(client = %self.id, topic = %will.topic, "will denied by ACL, dropped");
             return;
         }
