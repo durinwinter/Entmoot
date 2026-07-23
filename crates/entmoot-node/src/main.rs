@@ -17,6 +17,12 @@ struct Args {
     /// Print the SHA-256 hash of a password (for the config's users list) and exit
     #[arg(long, value_name = "PASSWORD")]
     hash_password: Option<String>,
+    /// Control-center-lite utility mode: ask the mesh (via --config/--peer,
+    /// same as a normal node) to force-disconnect this client id wherever
+    /// its live connection currently is, print the outcome, and exit
+    /// without starting a node. See ctl.rs.
+    #[arg(long, value_name = "CLIENT_ID")]
+    disconnect_client: Option<String>,
     /// Stable node identity (logs, metrics)
     #[arg(long)]
     id: Option<String>,
@@ -137,6 +143,18 @@ async fn main() -> Result<()> {
     }
     if let Some(secs) = args.churn_cooldown_secs {
         cfg.churn_cooldown_secs = secs;
+    }
+
+    if let Some(client_id) = args.disconnect_client {
+        match entmoot_node::query_disconnect(&cfg, &client_id).await? {
+            entmoot_node::DisconnectOutcome::Kicked { node } => {
+                println!("kicked: client {client_id:?} was connected to node {node:?}");
+            }
+            entmoot_node::DisconnectOutcome::NotFound => {
+                println!("not found: no node in the mesh currently holds client {client_id:?}");
+            }
+        }
+        return Ok(());
     }
 
     if cfg.auth.allow_anonymous && cfg.auth.users.is_empty() {

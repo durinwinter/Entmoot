@@ -8,6 +8,7 @@
 mod admission;
 mod churn;
 mod connection;
+pub mod ctl;
 mod health;
 mod metrics;
 mod retained;
@@ -15,6 +16,7 @@ mod session;
 
 pub use admission::ConnectAdmission;
 pub use churn::ChurnGuard;
+pub use ctl::DisconnectOutcome;
 pub use metrics::Metrics;
 pub use retained::RetainedStore;
 pub use session::SessionRegistry;
@@ -98,6 +100,26 @@ impl BrokerHandle {
             warn!("error closing zenoh session: {e}");
         }
     }
+}
+
+/// Open a short-lived Zenoh session using `cfg`'s peers/scope — binding no
+/// listener of its own, since a one-shot querying client has no need to
+/// accept inbound peer links — and ask the mesh to force-disconnect
+/// `client_id` (see `ctl.rs`). Used by the `entmoot --disconnect-client` CLI
+/// utility; any Zenoh session already peered into the same mesh and scope
+/// could do the same directly via `ctl::disconnect_client`.
+pub async fn query_disconnect(cfg: &NodeConfig, client_id: &str) -> Result<DisconnectOutcome> {
+    let mut query_cfg = cfg.clone();
+    query_cfg.zenoh_listen = Vec::new();
+    let session = zenoh::open(zenoh_config(&query_cfg)?)
+        .await
+        .map_err(|e| anyhow!("failed to open zenoh session: {e}"))?;
+    // Gossip needs a moment to learn the rest of the mesh from the explicit
+    // peer link(s) before a broadcast query would actually reach anyone.
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let outcome = ctl::disconnect_client(&session, &cfg.scope, client_id, ctl::DEFAULT_TIMEOUT).await;
+    session.close().await.ok();
+    outcome
 }
 
 fn zenoh_config(cfg: &NodeConfig) -> Result<zenoh::Config> {
@@ -286,6 +308,8 @@ pub async fn run(cfg: NodeConfig) -> Result<BrokerHandle> {
         Ok(n) => info!(node = %broker.cfg.id, count = n, "persistent sessions rehydrated from disk"),
         Err(e) => warn!(node = %broker.cfg.id, "subscription rehydration failed: {e}"),
     }
+
+    tasks.push(ctl::install(broker.clone()).await?);
 
     if let Some(l) = metrics_listener {
         let b = broker.clone();

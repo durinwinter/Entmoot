@@ -252,19 +252,31 @@ permission placeholders, (5) CRL/OCSP checking.
 
 HiveMQ's Control Center shows connected clients live and can force-
 disconnect one via the UI/REST API. Entmoot's Canopy Console
-(`web/index.html`) is a static config-authoring tool only — no live data —
-though workstream 6 of [RESILIENCE_ROADMAP.md](RESILIENCE_ROADMAP.md) just
-added the exact backend primitive a live one needs:
+(`web/index.html`) is still a static config-authoring tool only — no live
+UI has been built — but both backend primitives a live one needs now exist.
+Workstream 6 of [RESILIENCE_ROADMAP.md](RESILIENCE_ROADMAP.md) added
 `$meta/clients/<node-id>/<client-id>` connect/subscribe/unsubscribe/
-disconnect events, mesh-wide, the same way `$SYS` already works. This
-actually makes a "control center" *easier* to build for Entmoot than for
-HiveMQ, since no cluster-aware RPC layer is needed — a process that
-subscribes to `$meta/clients/#` mesh-wide already has a live view of every
-client on every node for free. What's still missing: a way to *act* on
-that view (force-disconnect), which needs a request/response pattern — a
-node publishes "disconnect client X" as a Zenoh query, whichever node
-currently holds that client's live connection replies and acts. Natural
-next step given `$meta/clients` already exists.
+disconnect events, mesh-wide, the same way `$SYS` already works — a process
+that subscribes to `$meta/clients/#` mesh-wide already has a live view of
+every client on every node for free, no cluster-aware RPC layer needed.
+**The other half — a way to *act* on that view — has now landed too**
+(`crates/entmoot-node/src/ctl.rs`): force-disconnect is a broadcast Zenoh
+query on an internal `@ctl/disconnect` keyspace (`?client=<id>`), and
+whichever node currently holds that client's live connection kicks it and
+replies; every other node silently ignores a query for a client it doesn't
+have. Reachable either as a library call
+(`entmoot_node::ctl::disconnect_client`, for any process already peered
+into the mesh) or via `entmoot --disconnect-client <id>` (a one-shot CLI
+utility mode that opens a throwaway session, queries, prints the outcome,
+and exits — see `crates/entmoot-node/tests/control_center.rs` for the
+mesh-wide integration test). Auth failures and ACL denials (publish,
+subscribe, will) are now also published onto the same `$meta/clients` bus
+alongside the existing `tracing::warn!` logs, closing out the audit-event
+half of priority item 4 too. What's still missing for a real Control
+Center: the actual live UI/dashboard consuming both of these — a
+`$meta/clients` subscriber feeding a client table, wired to a
+force-disconnect button. That's a frontend task now, not a protocol design
+one.
 
 ### Enterprise Bridge Extension / Kafka Extension (federation)
 
@@ -362,8 +374,11 @@ subscriber for free, no special API layer required).
    risk shipped.
 3. ✅ Pluggable/dynamic auth — done through hot-reload and static-key JWT;
    LDAP/AD bind and per-client dynamic permission placeholders remain open.
-4. Control-center-lite (force-disconnect over `$meta/clients`) and the
-   audit-event extension — both cheap, both build directly on workstream 6.
+4. ✅ Control-center-lite (force-disconnect over a `@ctl/disconnect` Zenoh
+   query, `ctl.rs`) and the audit-event extension (auth-fail/ACL-denials
+   now on `$meta/clients` too) — both landed, both built directly on
+   workstream 6. Still missing: the actual live dashboard UI consuming
+   these (a frontend task, not a protocol one).
 5. Per-scope quotas — moderate effort, purely local.
 6. Session-state mesh replication (true session HA) — the hardest,
    most architecturally novel item; needs dedicated design time for the

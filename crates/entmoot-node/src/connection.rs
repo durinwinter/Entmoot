@@ -18,7 +18,11 @@
 //! publish rate limit whose violators are disconnected, and JSON Schema
 //! data validation (`entmoot_core::schema`) on publishes matching a
 //! configured topic filter — dropped or disconnected per the rule's
-//! `on_fail` action.
+//! `on_fail` action. Auth failures and ACL denials (publish/subscribe/will)
+//! are both `tracing::warn!`-logged locally and published onto
+//! `$meta/clients` for a mesh-wide audit stream (see `publish_client_event`);
+//! a live connection can also be force-disconnected mesh-wide via
+//! `ctl.rs`'s control-center-lite query.
 
 use crate::metrics::Metrics;
 use crate::session::{activate_subscription, SessionState};
@@ -94,6 +98,9 @@ where
                     };
                     warn!(addr = %peer, user = ?login.map(|l| l.0), "CONNECT refused: {denied:?}");
                     Metrics::bump(&broker.metrics.connect_refused_total);
+                    let attempted_id = if connect.client_id.is_empty() { "<unknown>" } else { &connect.client_id };
+                    let user = login.map(|l| l.0).unwrap_or("<anonymous>");
+                    publish_client_event(&broker, attempted_id, &format!("auth_fail addr={peer} user={user} reason={denied:?}")).await;
                     conn.write_packet(&Packet::ConnAck(ConnAck::new(code, false))).await?;
                     return Ok(());
                 }
@@ -173,15 +180,20 @@ where
     result
 }
 
-/// Emit a client lifecycle event onto `$meta/clients/<node-id>/<client-id>`
-/// (RESILIENCE_ROADMAP.md workstream 6): so a visualizer keys client
-/// liveness off actual MQTT session activity — carried over Zenoh's own
-/// session keepalives — rather than guessing from tunnel/link state, which
-/// says nothing about whether a given MQTT client is still there. Routed
-/// through the normal mesh-wide pub/sub path, like `$SYS` and `$meta/<topic>`
-/// staleness: any session subscribed to `$meta/clients/#` sees it, gated by
-/// the same ACLs as everything else. Not retained: these are lifecycle
-/// events, not current state.
+/// Emit a client lifecycle or audit event onto `$meta/clients/<node-id>/<id>`
+/// (RESILIENCE_ROADMAP.md workstream 6, extended per ENTERPRISE_ROADMAP.md's
+/// audit-logging item): connect/subscribe/unsubscribe/disconnect give a
+/// visualizer a way to key client liveness off actual MQTT session activity
+/// — carried over Zenoh's own session keepalives — rather than guessing from
+/// tunnel/link state, which says nothing about whether a given MQTT client
+/// is still there; auth_fail/publish_denied/subscribe_denied/will_denied
+/// give a SIEM-facing process watching this same bus a live audit stream for
+/// free, no separate mechanism needed (structured `tracing::warn!` logs
+/// carry the same denials locally, per node, for anyone tailing logs
+/// instead). Routed through the normal mesh-wide pub/sub path, like `$SYS`
+/// and `$meta/<topic>` staleness: any session subscribed to
+/// `$meta/clients/#` sees it, gated by the same ACLs as everything else.
+/// Not retained: these are events, not current state.
 async fn publish_client_event(broker: &Broker, client_id: &str, event: &str) {
     let ke = topic::meta_keyexpr(&format!("clients/{}/{client_id}", broker.cfg.id), &broker.cfg.scope);
     if let Err(e) = broker.session.put(&ke, event.as_bytes().to_vec()).await {
@@ -307,6 +319,7 @@ impl Client {
             warn!(client = %self.id, user = %self.identity, topic = %p.topic,
                   "publish denied by ACL, dropping");
             Metrics::bump(&self.broker.metrics.publish_denied_total);
+            publish_client_event(&self.broker, &self.id, &format!("publish_denied topic={:?}", p.topic)).await;
         } else if let SchemaVerdict::Fail(action) = self.broker.schema.load().check(&p.topic, &p.payload) {
             Metrics::bump(&self.broker.metrics.schema_denied_total);
             match action {
@@ -363,6 +376,7 @@ impl Client {
             warn!(client = %self.id, user = %self.identity, filter,
                   "subscription denied by ACL");
             Metrics::bump(&self.broker.metrics.subscribe_denied_total);
+            publish_client_event(&self.broker, &self.id, &format!("subscribe_denied filter={filter:?}")).await;
             return SubscribeReasonCode::Failure;
         }
 
@@ -427,6 +441,7 @@ impl Client {
         let Some(will) = self.will.take() else { return };
         if !self.broker.acl.load().may_publish(&self.identity, &will.topic) {
             warn!(client = %self.id, topic = %will.topic, "will denied by ACL, dropped");
+            publish_client_event(&self.broker, &self.id, &format!("will_denied topic={:?}", will.topic)).await;
             return;
         }
         match topic::topic_to_keyexpr(&will.topic, &self.broker.cfg.scope) {

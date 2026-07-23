@@ -81,7 +81,7 @@ impl SessionRegistry {
                 }
                 Some(existing) => {
                     // cleanSession=1 discards any stored state (MQTT-3.1.2-6).
-                    existing.kick_current();
+                    existing.kick_current(KICK_TAKEOVER);
                     existing.abort_subs();
                     if let Some(path) = &queue_path {
                         remove_state_file(path);
@@ -162,6 +162,17 @@ impl SessionRegistry {
             s.abort_subs();
             s.discard_state_files();
         }
+    }
+
+    /// Force-disconnect `client_id`'s live connection, if it has one right
+    /// now (control-center-lite, see `ctl.rs`). Returns false if the client
+    /// isn't currently connected to this node at all (no session, or a
+    /// persistent session sitting offline) — the caller (a mesh-wide query)
+    /// treats that as "not found here" and moves on to whichever node, if
+    /// any, actually holds it.
+    pub fn kick(&self, client_id: &str) -> bool {
+        let session = self.sessions.lock().unwrap().get(client_id).cloned();
+        session.is_some_and(|s| s.kick_current(KICK_ADMIN))
     }
 
     /// (sessions, offline, queued messages, total dropped) for metrics.
@@ -326,6 +337,7 @@ pub enum Delivery {
 
 pub const KICK_TAKEOVER: &str = "session taken over by a new connection";
 pub const KICK_SLOW: &str = "slow consumer: outbound queue stayed full past the grace period";
+pub const KICK_ADMIN: &str = "disconnected by control-center request";
 
 impl SessionState {
     fn new(
@@ -420,11 +432,16 @@ impl SessionState {
         true
     }
 
-    fn kick_current(&self) {
+    /// Returns true iff there was a live connection to kick.
+    fn kick_current(&self, reason: &'static str) -> bool {
         let mut inner = self.inner.lock().unwrap();
-        if let Some(kick) = inner.kick.clone() {
-            inner.kick_reason = Some(KICK_TAKEOVER);
-            kick.notify_waiters();
+        match inner.kick.clone() {
+            Some(kick) => {
+                inner.kick_reason = Some(reason);
+                kick.notify_waiters();
+                true
+            }
+            None => false,
         }
     }
 
